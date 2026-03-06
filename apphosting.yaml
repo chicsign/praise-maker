@@ -1,0 +1,8 @@
+# apphosting.yaml
+runtime: python
+runConfig:
+  concurrency: 80
+  cpu: 1
+  memoryMiB: 512
+scripts:
+  run: streamlit run app.py --server.port 8080 --server.address 0.0.0.0

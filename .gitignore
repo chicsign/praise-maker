@@ -1,0 +1,19 @@
+# Google Auth & Firebase Keys (절대 업로드 금지)
+serviceAccountKey.json
+client_secret.json
+token.json
+
+# Python 환경 및 캐시
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+.env
+
+# Streamlit 관련
+.streamlit/config.toml
+.streamlit/secrets.toml
+
+# OS 관련
+.DS_Store
+Thumbs.db
