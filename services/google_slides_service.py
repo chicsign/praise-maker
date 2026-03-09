@@ -36,7 +36,7 @@ def get_credentials():
         scopes=creds_data["scopes"]
     )
 
-def create_praise_slides(cart_items, file_name=None):
+def create_praise_slides(cart_items, file_name, creds):
     creds = get_credentials()
     if not creds: return None
     
