@@ -1,46 +1,42 @@
 import streamlit as st
 import datetime
 import os
+import json
 from services.firebase_service import db, bucket
 from services.google_slides_service import create_flow, create_praise_slides
 
-# 1. 앱 기본 설정 (모든 st 함수 중 최상단에 위치해야 함)
+# [보안] 로컬(HTTP) 환경 테스트 허용
+os.environ['OAUTHLIB_INSECURE_TRANSPORT'] = '1'
+
+# 1. 앱 기본 설정 (최상단 고정)
 st.set_page_config(page_title="Praise Maker", layout="wide")
 
-# --- OAuth 인증 처리 (URL 파라미터 체크) ---
-query_params = st.query_params
-if "code" in query_params:
-    if "credentials" not in st.session_state:
-        try:
-            # 1. Flow 객체 재생성
-            flow = create_flow()
-            
-            # 2. [수정] fetch_token 시 authorization_response에 현재 페이지 URL 전체를 전달
-            # 로컬 테스트 시 http 임을 명시하기 위한 환경변수 설정 (보통 상단에 배치)
-            os.environ['OAUTHLIB_INSECURE_TRANSPORT'] = '1'
-            
-            # Streamlit의 현재 URL 구성을 이용해 전체 응답 URL 재구성
-            # (PKCE 미싱 에러 방지를 위한 가장 확실한 방법)
-            flow.fetch_token(code=query_params["code"])
-            
-            creds = flow.credentials
-            st.session_state["credentials"] = {
-                "token": creds.token,
-                "refresh_token": creds.refresh_token,
-                "token_uri": creds.token_uri,
-                "client_id": creds.client_id,
-                "client_secret": creds.client_secret,
-                "scopes": creds.scopes
-            }
-            st.query_params.clear()
-            st.rerun()
-        except Exception as e:
-            st.error(f"로그인 처리 중 오류 발생: {e}")
-
-# --- 세션 상태 초기화 ---
+# --- [중요] 세션 상태 초기화 및 로그인 유지 로직 ---
+if "credentials" not in st.session_state:
+    st.session_state["credentials"] = None
 if 'page' not in st.session_state: st.session_state['page'] = 'main'
-if 'editing_song' not in st.session_state: st.session_state['editing_song'] = None
 if 'cart' not in st.session_state: st.session_state['cart'] = []
+if 'slide_url' not in st.session_state: st.session_state['slide_url'] = None
+
+if st.query_params.get("code") and st.session_state["credentials"] is None:
+    try:
+        flow = create_flow()
+        flow.fetch_token(code=st.query_params["code"])
+        creds = flow.credentials
+        
+        st.session_state["credentials"] = {
+            "token": creds.token,
+            "refresh_token": creds.refresh_token,
+            "token_uri": creds.token_uri,
+            "client_id": creds.client_id,
+            "client_secret": creds.client_secret,
+            "scopes": creds.scopes
+        }
+
+        st.query_params.clear()
+        st.rerun()
+    except Exception as e:
+        st.error(f"로그인 처리 중 오류 발생: {e}")
 
 # --- 네비게이션 함수 ---
 def go_to_main(): st.session_state.update({"page": "main", "editing_song": None})
@@ -59,23 +55,64 @@ def delete_confirm_dialog(song_id, title):
         st.rerun()
     if c2.button("취소", use_container_width=True): st.rerun()
 
-# --- 1. 사이드바 (로그인 & Setlist) ---
+# --- 1. 사이드바 (인증 관리 & 장바구니) ---
 with st.sidebar:
     st.header("🔐 인증 관리")
-    if "credentials" not in st.session_state:
+    if st.session_state["credentials"] is None:
         st.warning("구글 로그인이 필요합니다.")
         flow = create_flow()
         auth_url, _ = flow.authorization_url(access_type="offline", prompt="consent")
-        st.link_button("🚀 Google 로그인", auth_url, use_container_width=True)
+        
+        # [디자인 개선] 정석 구글 스타일 로그인 버튼
+
+        st.markdown(f"""
+        <a href="{auth_url}" target="_self" style="text-decoration: none;">
+            <div style="
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                background-color: #ffffff;
+                color: #757575;
+                border-radius: 4px;
+                border: 1px solid #dadce0;
+                padding: 10px 15px;
+                font-family: 'Roboto', arial, sans-serif;
+                font-weight: 500;
+                cursor: pointer;
+                transition: background-color .2s, box-shadow .2s;
+                box-shadow: 0 1px 1px 0 rgba(66,133,244,.15);
+                margin-bottom: 10px;
+            " onmouseover="this.style.backgroundColor='#f8f9fa'; this.style.boxShadow='0 1px 3px 1px rgba(66,133,244,.3)';" 
+               onmouseout="this.style.backgroundColor='#ffffff'; this.style.boxShadow='0 1px 1px 0 rgba(66,133,244,.15)';"
+            >
+                <img src="https://fonts.gstatic.com/s/i/productlogos/googleg/v6/24px.svg" width="20px" height="20px" style="margin-right: 12px;">
+                Google 계정으로 로그인
+            </div>
+        </a>
+        """, unsafe_allow_html=True)
     else:
-        st.success("구글 인증 완료")
+        st.success("✅ 구글 인증 완료")
         if st.button("로그아웃", use_container_width=True):
-            del st.session_state["credentials"]
+            st.session_state["credentials"] = None
+            st.session_state['slide_url'] = None 
             st.rerun()
 
     st.divider()
     st.header("🛒 선택된 콘티")
+    
+    # 생성 성공
+    if st.session_state['slide_url']:
+        st.success("🎉 콘티 생성 성공!")
+        st.link_button("📂 슬라이드 열기", st.session_state['slide_url'], use_container_width=True)
+        if st.button("비우기", use_container_width=True):
+            st.session_state['slide_url'] = None
+            st.rerun()
+        st.divider()
+
     if st.session_state['cart']:
+        default_filename = f"찬양콘티_{datetime.datetime.now().strftime('%y%m%d')}"
+        custom_filename = st.text_input("📄 생성될 파일명", value=default_filename)
+        
         for idx, item in enumerate(st.session_state['cart']):
             with st.container(border=True):
                 head1, head2 = st.columns([4, 1])
@@ -84,7 +121,6 @@ with st.sidebar:
                     st.session_state['cart'].pop(idx)
                     st.rerun()
                 
-                # 순서 변경 버튼
                 btn_up, btn_down = st.columns(2)
                 if btn_up.button("↑", key=f"up_{idx}", disabled=(idx == 0), use_container_width=True):
                     st.session_state['cart'][idx], st.session_state['cart'][idx-1] = st.session_state['cart'][idx-1], st.session_state['cart'][idx]
@@ -94,31 +130,38 @@ with st.sidebar:
                     st.rerun()
         
         st.write("---")
-        # 구글 슬라이드 생성 버튼
+        
         if st.button("✨ 콘티 생성", type="primary", use_container_width=True):
-            if "credentials" not in st.session_state:
+            if st.session_state["credentials"] is None:
                 st.error("먼저 구글 로그인을 해주세요.")
             else:
                 with st.spinner("구글 슬라이드 제작 중..."):
                     try:
-                        slide_url = create_praise_slides(st.session_state['cart'])
-                        st.success("생성 완료!")
-                        st.link_button("📂 슬라이드 열기", slide_url, use_container_width=True)
+                        # 1. 슬라이드 생성
+                        slide_url = create_praise_slides(st.session_state['cart'], custom_filename)
+                        
+                        # 2. 성공 시 즉시 장바구니 비우기
+                        st.session_state['cart'] = []
+                        
+                        # 3. 결과 URL 저장 (UI에서 성공 메시지를 띄우기 위함)
+                        st.session_state['slide_url'] = slide_url
+                        
+                        # 4. 화면 갱신
+                        st.rerun()
+                        
                     except Exception as e:
                         st.error(f"실패: {e}")
         
-        if st.button("리스트 비우기", use_container_width=True):
+        if st.button("비우기", use_container_width=True):
             st.session_state['cart'] = []
             st.rerun()
-    else:
+    elif not st.session_state['slide_url']:
         st.caption("곡을 담아주세요.")
 
-# --- 2. 페이지 본문 분기 ---
+# --- 2. 메인 화면 로직 (추가/수정/검색) ---
 if st.session_state['page'] in ['add_song', 'edit_song']:
-    # [생략] 작성하신 Case 1 (추가/수정) 로직 그대로 유지
     is_edit = st.session_state['page'] == 'edit_song'
-    song = st.session_state.get('editing_song') if is_edit else {}
-    if song is None: song = {}
+    song = st.session_state.get('editing_song', {})
     
     if st.button("Back"): go_to_main(); st.rerun()
     st.header("곡 수정" if is_edit else "새 곡 추가")
@@ -157,11 +200,7 @@ if st.session_state['page'] in ['add_song', 'edit_song']:
                         data["created_at"] = datetime.datetime.now()
                         db.collection("songs").add(data)
                 go_to_main(); st.rerun()
-            else:
-                st.error("제목을 입력해주세요.")
-
 else:
-    # [생략] 작성하신 Case 2 (메인 목록) 로직 그대로 유지
     col_t, col_a = st.columns([5, 1])
     col_t.title("🎵 Praise Maker")
     if col_a.button("곡 추가", type="primary", use_container_width=True): 

@@ -1,6 +1,6 @@
 import os
 import datetime
-import streamlit as st  # Flask 대신 Streamlit 사용
+import streamlit as st
 from google_auth_oauthlib.flow import Flow
 from googleapiclient.discovery import build
 from google.oauth2.credentials import Credentials
@@ -8,40 +8,24 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-SCOPES = [
-    "https://www.googleapis.com/auth/presentations",
-    "https://www.googleapis.com/auth/drive"
-]
+SCOPES = ["https://www.googleapis.com/auth/presentations", "https://www.googleapis.com/auth/drive"]
 
-# Client Config (환경변수 기반)
 CLIENT_CONFIG = {
     "web": {
-        "client_id": os.environ["GOOGLE_CLIENT_ID"],
-        "client_secret": os.environ["GOOGLE_CLIENT_SECRET"],
+        "client_id": os.environ.get("GOOGLE_CLIENT_ID"),
+        "client_secret": os.environ.get("GOOGLE_CLIENT_SECRET"),
         "auth_uri": "https://accounts.google.com/o/oauth2/auth",
         "token_uri": "https://oauth2.googleapis.com/token"
     }
 }
 
-REDIRECT_URI = os.environ["OAUTH_REDIRECT_URI"]
-USER_EMAIL = os.environ["USER_EMAIL"]
-FOLDER_ID = os.environ["FOLDER_ID"]
-
 def create_flow():
-    # .env에서 공백 없이 잘 가져오는지 확인 필수
     redirect_uri = os.environ.get("OAUTH_REDIRECT_URI", "http://localhost:8501").strip()
-    
-    return Flow.from_client_config(
-        CLIENT_CONFIG,
-        scopes=SCOPES,
-        redirect_uri=redirect_uri
-    )
+    return Flow.from_client_config(CLIENT_CONFIG, scopes=SCOPES, redirect_uri=redirect_uri)
 
 def get_credentials():
-    """Streamlit 세션 상태에서 인증 정보를 가져옴"""
-    if "credentials" not in st.session_state:
+    if "credentials" not in st.session_state or st.session_state["credentials"] is None:
         return None
-
     creds_data = st.session_state["credentials"]
     return Credentials(
         token=creds_data["token"],
@@ -52,64 +36,44 @@ def get_credentials():
         scopes=creds_data["scopes"]
     )
 
-def create_praise_slides(cart_items):
+def create_praise_slides(cart_items, file_name=None):
     creds = get_credentials()
-
-    if not creds:
-        st.error("로그인이 필요합니다.")
-        return None
-
-    # static_discovery=False를 추가하여 에러 방지
+    if not creds: return None
+    
     slides_service = build("slides", "v1", credentials=creds, static_discovery=False)
     drive_service = build("drive", "v3", credentials=creds, static_discovery=False)
 
-    now = datetime.datetime.now().strftime("%Y%m%d_%H%M")
-
-    # 1. 구글 드라이브에 파일 생성
-    file_metadata = {
-        "name": f"콘티_{now}",
-        "mimeType": "application/vnd.google-apps.presentation",
-        "parents": [FOLDER_ID] if FOLDER_ID else []
-    }
+    if not file_name: file_name = f"콘티_{datetime.datetime.now().strftime('%y%m%d')}"
     
+    file_metadata = {
+        "name": file_name,
+        "mimeType": "application/vnd.google-apps.presentation",
+        "parents": [os.environ.get("FOLDER_ID")] if os.environ.get("FOLDER_ID") else []
+    }
     file = drive_service.files().create(body=file_metadata, fields="id").execute()
     presentation_id = file["id"]
 
-    # 2. 권한 부여 (필요 시)
-    drive_service.permissions().create(
-        fileId=presentation_id,
-        body={"type": "user", "role": "writer", "emailAddress": USER_EMAIL}
-    ).execute()
-
-    # 3. 슬라이드 작업 (기존 로직 동일)
     requests = []
-    for idx, item in enumerate(cart_items):
-        image_url = item.get("image_url")
-        if not image_url: continue
+    # 2분할 배치 로직
+    for i in range(0, len(cart_items), 2):
+        page_id = f"page_{i}_{datetime.datetime.now().microsecond}"
+        requests.append({"createSlide": {"objectId": page_id, "insertionIndex": str(i // 2), 
+                                         "slideLayoutReference": {"predefinedLayout": "BLANK"}}})
         
-        page_id = f"slide_p_{idx}_{datetime.datetime.now().microsecond}"
-        requests.append({
-            "createSlide": {
-                "objectId": page_id,
-                "insertionIndex": str(idx),
-                "slideLayoutReference": {"predefinedLayout": "BLANK"}
-            }
-        })
-        requests.append({
-            "createImage": {
-                "url": image_url,
-                "elementProperties": {
-                    "pageObjectId": page_id,
-                    "size": {"width": {"magnitude": 720, "unit": "PT"}, "height": {"magnitude": 405, "unit": "PT"}},
-                    "transform": {"scaleX": 1, "scaleY": 1, "translateX": 0, "translateY": 0, "unit": "PT"}
-                }
-            }
-        })
+        # 왼쪽 배치
+        if cart_items[i].get("image_url"):
+            requests.append({"createImage": {"url": cart_items[i]["image_url"],
+                "elementProperties": {"pageObjectId": page_id, 
+                "size": {"width": {"magnitude": 360, "unit": "PT"}, "height": {"magnitude": 405, "unit": "PT"}},
+                "transform": {"scaleX": 1, "scaleY": 1, "translateX": 0, "translateY": 0, "unit": "PT"}}}})
+        
+        # 오른쪽 배치
+        if i + 1 < len(cart_items) and cart_items[i+1].get("image_url"):
+            requests.append({"createImage": {"url": cart_items[i+1]["image_url"],
+                "elementProperties": {"pageObjectId": page_id, 
+                "size": {"width": {"magnitude": 360, "unit": "PT"}, "height": {"magnitude": 405, "unit": "PT"}},
+                "transform": {"scaleX": 1, "scaleY": 1, "translateX": 360, "translateY": 0, "unit": "PT"}}}})
 
     if requests:
-        slides_service.presentations().batchUpdate(
-            presentationId=presentation_id,
-            body={"requests": requests}
-        ).execute()
-
+        slides_service.presentations().batchUpdate(presentationId=presentation_id, body={"requests": requests}).execute()
     return f"https://docs.google.com/presentation/d/{presentation_id}"
