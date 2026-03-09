@@ -187,7 +187,7 @@ if st.session_state['page'] in ['add_song', 'edit_song']:
                         "youtube_url": yt_input, "updated_at": datetime.datetime.now()
                     }
                     if img_f:
-                        b = bucket.blob(f"scores/{title_input}_{img_f.name}")
+                        b = bucket.blob(f"songs/{title_input}_{img_f.name}")
                         b.upload_from_string(img_f.read(), content_type=img_f.type); b.make_public()
                         data["image_url"] = b.public_url
                     if ppt_f:
