@@ -4,6 +4,7 @@ import os
 import json
 from services.firebase_service import db, bucket
 from services.google_slides_service import create_flow, create_praise_slides
+from google.oauth2.credentials import Credentials
 
 # [보안] 로컬(HTTP) 환경 테스트 허용
 os.environ['OAUTHLIB_INSECURE_TRANSPORT'] = '1'
@@ -37,6 +38,20 @@ if st.query_params.get("code") and st.session_state["credentials"] is None:
         st.rerun()
     except Exception as e:
         st.error(f"로그인 처리 중 오류 발생: {e}")
+
+
+def get_google_credentials():
+    if st.session_state.get("credentials") is None:
+        return None
+
+    return Credentials(
+        token=st.session_state["credentials"]["token"],
+        refresh_token=st.session_state["credentials"]["refresh_token"],
+        token_uri=st.session_state["credentials"]["token_uri"],
+        client_id=st.session_state["credentials"]["client_id"],
+        client_secret=st.session_state["credentials"]["client_secret"],
+        scopes=st.session_state["credentials"]["scopes"]
+    )
 
 # --- 네비게이션 함수 ---
 def go_to_main(): st.session_state.update({"page": "main", "editing_song": None})
@@ -138,7 +153,13 @@ with st.sidebar:
                 with st.spinner("구글 슬라이드 제작 중..."):
                     try:
                         # 1. 슬라이드 생성
-                        slide_url = create_praise_slides(st.session_state['cart'], custom_filename)
+                        creds = get_google_credentials()
+
+                        slide_url = create_praise_slides(
+                            st.session_state['cart'],
+                            custom_filename,
+                            creds
+                        )
                         
                         # 2. 성공 시 즉시 장바구니 비우기
                         st.session_state['cart'] = []
@@ -221,9 +242,42 @@ else:
                 st.markdown(f"**Key:** {s['start_key']} | {' '.join([f'`#{t}`' for t in s.get('tags', [])])}")
                 
                 l1, l2, l3 = st.columns(3)
-                if s.get("youtube_url"): l1.link_button("Youtube", s["youtube_url"], use_container_width=True)
-                if s.get("image_url"): l2.link_button("악보", s["image_url"], use_container_width=True)
-                if s.get("ppt_url"): l3.link_button("PPT", s["ppt_url"], use_container_width=True)
+                button_style = """
+                display:flex;
+                align-items:center;
+                justify-content:center;
+                background-color:#F0F2F6;
+                color:#262730;
+                padding:8px;
+                border-radius:6px;
+                text-decoration:none;
+                font-weight:600;
+                border:1px solid #E6E9EF;
+                height:38px;
+                """
+
+                if s.get("youtube_url"):
+                    l1.markdown(f"""
+                    <a href="{s["youtube_url"]}" target="_blank" style="{button_style}">
+                    <img src="https://upload.wikimedia.org/wikipedia/commons/7/75/YouTube_social_white_squircle_%282017%29.svg"
+                    width="18" style="margin-right:8px;">
+                    YouTube
+                    </a>
+                    """, unsafe_allow_html=True)
+
+                if s.get("image_url"):
+                    l2.markdown(f"""
+                    <a href="{s["image_url"]}" target="_blank" style="{button_style}">
+                    악보
+                    </a>
+                    """, unsafe_allow_html=True)
+
+                if s.get("ppt_url"):
+                    l3.markdown(f"""
+                    <a href="{s["ppt_url"]}" target="_blank" style="{button_style}">
+                    PPTX
+                    </a>
+                    """, unsafe_allow_html=True)
                 
                 if st.button("리스트에 담기", key=f"c_{s['id']}", use_container_width=True, type="primary"):
                     if not any(item['id'] == s['id'] for item in st.session_state['cart']):
