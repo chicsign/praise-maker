@@ -2,175 +2,152 @@ import streamlit as st
 import datetime
 from services.firebase_service import db, bucket
 
-# 앱 설정 (사이드바 활용을 위해 레이아웃을 wide로 변경 고려)
+# 1. 앱 기본 설정
 st.set_page_config(page_title="Praise Maker", layout="wide")
 
-# --- 페이지 상태 관리 (Navigation) ---
-if 'page' not in st.session_state:
-    st.session_state['page'] = 'main'
+# --- 페이지 상태 관리 ---
+if 'page' not in st.session_state: st.session_state['page'] = 'main'
+if 'editing_song' not in st.session_state: st.session_state['editing_song'] = None
+if 'cart' not in st.session_state: st.session_state['cart'] = []
 
-def go_to_main():
-    st.session_state['page'] = 'main'
+def go_to_main(): st.session_state.update({"page": "main", "editing_song": None})
+def go_to_add(): st.session_state['page'] = 'add_song'
+def go_to_edit(song_data):
+    st.session_state.update({"editing_song": song_data, "page": "edit_song"})
+    st.rerun()
 
-def go_to_add():
-    st.session_state['page'] = 'add_song'
+# --- 삭제 확인 모달 ---
+@st.dialog("곡 삭제 확인")
+def delete_confirm_dialog(song_id, title):
+    st.write(f"'{title}' 곡을 삭제하시겠습니까?")
+    c1, c2 = st.columns(2)
+    if c1.button("삭제", type="primary", use_container_width=True):
+        db.collection("songs").document(song_id).delete()
+        st.rerun()
+    if c2.button("취소", use_container_width=True): st.rerun()
 
-# --- 1. 공통 사이드바 (장바구니) ---
+# --- 1. 사이드바 (Setlist & 순서 변경) ---
 with st.sidebar:
     st.header("🛒 선택된 콘티")
-    if 'cart' in st.session_state and st.session_state['cart']:
-        st.caption(f"총 {len(st.session_state['cart'])}곡")
-        
-        # 선택된 곡 리스트 UI
+    if st.session_state['cart']:
         for idx, item in enumerate(st.session_state['cart']):
             with st.container(border=True):
-                c1, c2 = st.columns([4, 1])
-                c1.markdown(f"**{idx+1}. {item['title']}**")
-                c1.caption(f"Key: {item.get('start_key')}")
-                if c2.button("❌", key=f"del_{idx}"):
+                # 제목과 삭제 버튼
+                head1, head2 = st.columns([4, 1])
+                head1.write(f"**{idx+1}. {item['title']}**")
+                if head2.button("X", key=f"cart_del_{idx}"):
                     st.session_state['cart'].pop(idx)
                     st.rerun()
+                
+                # 순서 변경 버튼 (위/아래)
+                btn_up, btn_down = st.columns(2)
+                if btn_up.button("↑", key=f"up_{idx}", disabled=(idx == 0), use_container_width=True):
+                    st.session_state['cart'][idx], st.session_state['cart'][idx-1] = st.session_state['cart'][idx-1], st.session_state['cart'][idx]
+                    st.rerun()
+                if btn_down.button("↓", key=f"down_{idx}", disabled=(idx == len(st.session_state['cart'])-1), use_container_width=True):
+                    st.session_state['cart'][idx], st.session_state['cart'][idx+1] = st.session_state['cart'][idx+1], st.session_state['cart'][idx]
+                    st.rerun()
         
-        st.write("")
-        if st.button("✨ 콘티 생성 시작", type="primary", use_container_width=True):
-            st.info("구글 슬라이드 생성을 시도합니다...")
-            
-        if st.button("🗑️ 전체 비우기", use_container_width=True):
+        st.write("---")
+        if st.button("✨콘티 생성✨", type="primary", use_container_width=True):
+            st.info("구글 슬라이드 생성 로직 준비 중...")
+        if st.button("비우기", use_container_width=True):
             st.session_state['cart'] = []
             st.rerun()
     else:
-        st.info("목록에서 곡을 담아주세요.")
+        st.caption("곡을 담아주세요.")
 
-# --- CASE 1: 새 곡 추가 페이지 ---
-if st.session_state['page'] == 'add_song':
-    st.button("돌아가기", on_click=go_to_main)
-    st.title("➕ 새 곡 추가")
+# --- CASE 1: 곡 추가/수정 페이지 ---
+if st.session_state['page'] in ['add_song', 'edit_song']:
+    is_edit = st.session_state['page'] == 'edit_song'
+    # 에러 방지용 안전한 변수 할당
+    song = st.session_state.get('editing_song') if is_edit else {}
+    if song is None: song = {}
     
-    with st.form("add_song_form", clear_on_submit=True):
-        col1, col2 = st.columns(2)
-        with col1:
-            new_title = st.text_input("곡 제목")
-            new_key = st.selectbox("시작 코드", ["C", "D", "E", "F", "G", "A", "B"])
-        with col2:
-            new_tags = st.text_input("태그 (쉼표 구분)", placeholder="느린곡, 경배")
-            new_youtube = st.text_input("YouTube URL")
+    if st.button("Back"): 
+        go_to_main()
+        st.rerun()
         
-        st.divider()
-        st.subheader("📁 파일 업로드")
-        img_file = st.file_uploader("악보 이미지 (JPG, PNG)", type=['jpg', 'jpeg', 'png'])
-        ppt_file = st.file_uploader("PPT 파일 (PPTX, PPT)", type=['pptx', 'ppt'])
+    st.header("곡 수정" if is_edit else "새 곡 추가")
+    
+    # --- FORM 시작 ---
+    with st.form("song_form"):
+        c1, c2 = st.columns(2)
+        title_input = c1.text_input("제목", value=song.get('title', ''))
         
-        submitted = st.form_submit_button("Firestore에 저장", use_container_width=True)
+        # 키 선택 (기존 값 인덱스 찾기)
+        keys = ["C","D","E","F","G","A","B"]
+        default_key_idx = keys.index(song.get('start_key', 'C')) if song.get('start_key') in keys else 0
+        key_input = c1.selectbox("키", keys, index=default_key_idx)
+        tags_input = c2.text_input("태그 (쉼표 구분)", placeholder="느린곡, 경배", value=", ".join(song.get('tags', [])))
+        yt_input = c2.text_input("YouTube", value=song.get('youtube_url', ''))
+        
+        img_f = st.file_uploader("악보 이미지", type=['jpg','png','jpeg'])
+        ppt_f = st.file_uploader("PPT 파일", type=['pptx','ppt'])
+        
+        # --- Missing Submit Button 해결 ---
+        submitted = st.form_submit_button("저장하기", use_container_width=True)
         
         if submitted:
-            if new_title:
-                with st.spinner("파일 및 데이터 저장 중..."):
-                    img_url = ""
-                    ppt_url = ""
-                    
-                    if img_file:
-                        blob_img = bucket.blob(f"scores/{new_title}_{img_file.name}")
-                        blob_img.upload_from_string(img_file.read(), content_type=img_file.type)
-                        blob_img.make_public()
-                        img_url = blob_img.public_url
-                    
-                    if ppt_file:
-                        blob_ppt = bucket.blob(f"ppts/{new_title}_{ppt_file.name}")
-                        blob_ppt.upload_from_string(ppt_file.read(), content_type=ppt_file.type)
-                        blob_ppt.make_public()
-                        ppt_url = blob_ppt.public_url
+            if title_input:
+                with st.spinner("처리 중..."):
+                    data = {
+                        "title": title_input, "start_key": key_input,
+                        "tags": [t.strip() for t in tags_input.split(",")] if tags_input else [],
+                        "youtube_url": yt_input, "updated_at": datetime.datetime.now()
+                    }
+                    if img_f:
+                        b = bucket.blob(f"scores/{title_input}_{img_f.name}")
+                        b.upload_from_string(img_f.read(), content_type=img_f.type); b.make_public()
+                        data["image_url"] = b.public_url
+                    if ppt_f:
+                        b = bucket.blob(f"ppts/{title_input}_{ppt_f.name}")
+                        b.upload_from_string(ppt_f.read(), content_type=ppt_f.type); b.make_public()
+                        data["ppt_url"] = b.public_url
 
-                    tag_list = [t.strip() for t in new_tags.split(",")] if new_tags else []
-                    db.collection("songs").add({
-                        "title": new_title,
-                        "start_key": new_key,
-                        "tags": tag_list,
-                        "youtube_url": new_youtube,
-                        "image_url": img_url,
-                        "ppt_url": ppt_url,
-                        "created_at": datetime.datetime.now()
-                    })
+                    if is_edit: db.collection("songs").document(song['id']).update(data)
+                    else: 
+                        data["created_at"] = datetime.datetime.now()
+                        db.collection("songs").add(data)
                     
-                st.success(f"'{new_title}' 추가 완료!")
-                st.balloons()
-                st.session_state['page'] = 'main'
+                go_to_main()
                 st.rerun()
             else:
-                st.error("곡 제목은 필수입니다.")
+                st.error("제목을 입력해주세요.")
 
 # --- CASE 2: 메인 검색 페이지 ---
 else:
-    st.title("🎵 Praise Maker")
+    col_t, col_a = st.columns([5, 1])
+    col_t.title("🎵Praise Maker")
+    if col_a.button("곡 추가", type="primary", use_container_width=True): 
+        go_to_add()
+        st.rerun()
 
-    # 검색창 및 추가 버튼 레이아웃
-    col_sub, col_add = st.columns([4, 1])
-    with col_sub:
-        st.subheader("🔍 찬양 검색")
-    with col_add:
-        st.button("➕ 새 곡 추가", on_click=go_to_add, use_container_width=True)
-
-    # 검색어 입력 (제목, 태그, 키 통합 검색)
-    search_query = st.text_input(
-        "제목, 태그, 또는 시작 키를 입력하세요", 
-        placeholder="예: 나의 안에 거하라 / 느린곡 / G키", 
-        label_visibility="collapsed"
-    ).strip().lower()
-
-    songs_ref = db.collection("songs")
+    query = st.text_input("search", placeholder="제목, 태그, 키 검색", label_visibility="collapsed").strip().lower()
+    docs = db.collection("songs").order_by("created_at", direction="DESCENDING").limit(50).stream()
     
-    # 1. 일단 최신순으로 데이터를 가져옵니다 (필터링은 파이썬에서 진행)
-    # 데이터가 아주 많아지면 Firestore 쿼리를 세분화해야 하지만, 현재는 이 방식이 가장 유연합니다.
-    all_songs = songs_ref.order_by("created_at", direction="DESCENDING").stream()
-    
-    filtered_songs = []
-    for doc in all_songs:
-        song_data = doc.to_dict()
-        song_data['id'] = doc.id  # ID 보관
-        
-        if not search_query:
-            filtered_songs.append(song_data)
-            continue
+    for doc in docs:
+        s = doc.to_dict(); s['id'] = doc.id
+        if not query or (query in s.get('title','').lower()) or (query in s.get('start_key','').lower()) or any(query in t.lower() for t in s.get('tags', [])):
             
-        # 검색 필터링 조건 (제목, 태그 리스트, 시작 키 중 하나라도 포함되면 노출)
-        title = song_data.get('title', '').lower()
-        start_key = song_data.get('start_key', '').lower()
-        tags = [t.lower() for t in song_data.get('tags', [])]
-        
-        if (search_query in title) or \
-           (search_query in start_key) or \
-           (any(search_query in t for t in tags)):
-            filtered_songs.append(song_data)
-
-    # 2. 필터링된 결과 출력
-    if not filtered_songs:
-        st.info("검색 결과가 없습니다.")
-    else:
-        for song in filtered_songs:
             with st.container(border=True):
-                col_info, col_btn = st.columns([4, 1])
-                with col_info:
-                    st.markdown(f"### {song.get('title', '제목 없음')}")
-                    tags = song.get('tags', [])
-                    tag_str = " ".join([f"`#{t}`" for t in tags])
-                    st.markdown(f"🔑 **Key**: {song.get('start_key', 'N/A')} | {tag_str}")
-                    
-                    l_col1, l_col2, l_col3 = st.columns(3)
-                    if song.get("youtube_url"):
-                        l_col1.link_button("📺 YouTube", song["youtube_url"], use_container_width=True)
-                    if song.get("image_url"):
-                        l_col2.link_button("🖼️ 악보", song["image_url"], use_container_width=True)
-                    if song.get("ppt_url"):
-                        l_col3.link_button("📊 PPT", song["ppt_url"], use_container_width=True)
-
-                with col_btn:
-                    st.write("") 
-                    if st.button("담기", key=f"add_{song['id']}", use_container_width=True, type="secondary"):
-                        if 'cart' not in st.session_state: 
-                            st.session_state['cart'] = []
-                        
-                        if not any(item['title'] == song['title'] for item in st.session_state['cart']):
-                            st.session_state['cart'].append(song)
-                            st.toast(f"'{song['title']}' 담기 완료!")
-                            st.rerun() # 사이드바 즉시 갱신
-                        else:
-                            st.warning("이미 담긴 곡입니다.")
+                # 제목 + 수정/삭제 (이모지)
+                header_col, edit_col, del_col = st.columns([8, 0.6, 0.6])
+                header_col.markdown(f"### {s['title']}")
+                if edit_col.button("수정", key=f"e_{s['id']}"): go_to_edit(s)
+                if del_col.button("곡 삭제", key=f"d_{s['id']}"): delete_confirm_dialog(s['id'], s['title'])
+                
+                # 정보
+                st.markdown(f"**Key:** {s['start_key']} | {' '.join([f'`#{t}`' for t in s.get('tags', [])])}")
+                
+                # 하단 버튼 (Youtube, 악보, PPT)
+                l1, l2, l3 = st.columns(3)
+                if s.get("youtube_url"): l1.link_button("Youtube", s["youtube_url"], use_container_width=True)
+                if s.get("image_url"): l2.link_button("악보", s["image_url"], use_container_width=True)
+                if s.get("ppt_url"): l3.link_button("PPT", s["ppt_url"], use_container_width=True)
+                
+                # 담기 버튼
+                if st.button("리스트에 담기", key=f"c_{s['id']}", use_container_width=True, type="primary"):
+                    if not any(item['id'] == s['id'] for item in st.session_state['cart']):
+                        st.session_state['cart'].append(s)
+                        st.rerun()
