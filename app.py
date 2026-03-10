@@ -35,7 +35,7 @@ if not cookies.ready(): st.stop()
 # -------------------------------
 for key, default in {
     "credentials": None, "page": "main", "cart": [], 
-    "slide_url": None, "merged_ppt_folder_url": None
+    "slide_url": None, "merged_ppt_url": None, "merged_ppt_folder_url": None
 }.items():
     if key not in st.session_state: st.session_state[key] = default
 
@@ -45,13 +45,16 @@ for key, default in {
 if st.session_state["credentials"] is None:
     token, refresh = cookies.get("token"), cookies.get("refresh_token")
     if token and refresh:
-        st.session_state["credentials"] = {
-            "token": token, "refresh_token": refresh,
-            "token_uri": "https://oauth2.googleapis.com/token",
-            "client_id": os.environ["GOOGLE_CLIENT_ID"],
-            "client_secret": os.environ["GOOGLE_CLIENT_SECRET"],
-            "scopes": ["https://www.googleapis.com/auth/presentations", "https://www.googleapis.com/auth/drive"]
-        }
+        try:
+            st.session_state["credentials"] = {
+                "token": token, "refresh_token": refresh,
+                "token_uri": "https://oauth2.googleapis.com/token",
+                "client_id": os.environ["GOOGLE_CLIENT_ID"],
+                "client_secret": os.environ["GOOGLE_CLIENT_SECRET"],
+                "scopes": ["https://www.googleapis.com/auth/presentations", "https://www.googleapis.com/auth/drive"]
+            }
+        except Exception:
+            pass
 
 if st.query_params.get("code") and st.session_state["credentials"] is None:
     try:
@@ -73,8 +76,9 @@ if st.query_params.get("code") and st.session_state["credentials"] is None:
 # HELPER FUNCTIONS
 # -------------------------------
 def get_google_credentials():
-    if not st.session_state.get("credentials"): return None
-    return Credentials(**st.session_state["credentials"])
+    creds_dict = st.session_state.get("credentials")
+    if not creds_dict: return None
+    return Credentials(**creds_dict)
 
 def go_to_main(): st.session_state.update({"page": "main", "editing_song": None})
 def go_to_add(): st.session_state['page'] = 'add_song'
@@ -88,50 +92,69 @@ def go_to_edit(song_data):
 def convert_ppt_to_pptx(input_path):
     output_dir = os.path.dirname(input_path)
     soffice = r'C:\Program Files\LibreOffice\program\soffice.exe' if platform.system() == "Windows" else 'soffice'
-    if platform.system() == "Windows" and not os.path.exists(soffice):
-        st.error("LibreOffice 설치 경로를 확인해주세요."); return None
     try:
-        subprocess.run([soffice, '--headless', '--convert-to', 'pptx', '--outdir', output_dir, input_path], check=True, capture_output=True)
-        return os.path.join(output_dir, os.path.splitext(os.path.basename(input_path))[0] + ".pptx")
-    except Exception as e: st.error(f"변환 실패: {e}"); return None
+        if platform.system() == "Windows" and not os.path.exists(soffice):
+            st.error("Windows LibreOffice 경로를 찾을 수 없습니다.")
+            return None
+        
+        # Cloud Run(Linux)에서는 'soffice' 명령어가 PATH에 있어야 함
+        subprocess.run([soffice, '--headless', '--convert-to', 'pptx', '--outdir', output_dir, input_path], 
+                       check=True, capture_output=True)
+        
+        base_name = os.path.splitext(os.path.basename(input_path))[0]
+        return os.path.join(output_dir, base_name + ".pptx")
+    except Exception as e: 
+        st.error(f"LibreOffice 변환 실패: {e}")
+        return None
 
 def upload_to_drive(file_path, filename, credentials):
-    service = build('drive', 'v3', credentials=credentials)
-    FOLDER_ID = "1Lr_0MmneLOKNyKhW6TMl6V3L88TlBn5P" 
-    file_metadata = {'name': filename, 'parents': [FOLDER_ID]}
-    media = MediaFileUpload(file_path, mimetype='application/vnd.openxmlformats-officedocument.presentationml.presentation')
-    
-    # 파일 업로드 후 id와 webViewLink를 받아옵니다.
-    file = service.files().create(body=file_metadata, media_body=media, fields='id, webViewLink').execute()
-    
-    # (파일 개별 링크, 폴더 링크)를 함께 반환
-    file_url = file.get('webViewLink')
-    folder_url = f"https://drive.google.com/drive/folders/{FOLDER_ID}"
-    return file_url, folder_url
+    try:
+        if not credentials:
+            st.error("드라이브 업로드를 위한 인증 정보가 없습니다.")
+            return None, None
+            
+        service = build('drive', 'v3', credentials=credentials)
+        FOLDER_ID = "1Lr_0MmneLOKNyKhW6TMl6V3L88TlBn5P" 
+        file_metadata = {'name': filename, 'parents': [FOLDER_ID]}
+        media = MediaFileUpload(file_path, mimetype='application/vnd.openxmlformats-officedocument.presentationml.presentation')
+        
+        file = service.files().create(body=file_metadata, media_body=media, fields='id, webViewLink').execute()
+        return file.get('webViewLink'), f"https://drive.google.com/drive/folders/{FOLDER_ID}"
+    except Exception as e:
+        st.error(f"구글 드라이브 업로드 중 에러: {e}")
+        return None, None
 
 def merge_ppt_files(cart_items, custom_filename, credentials):
+    if not credentials:
+        st.error("로그인이 필요합니다.")
+        return None, None
+        
     temp_dir = tempfile.mkdtemp()
     processed_files = []
     try:
         for idx, item in enumerate(cart_items):
-            if not item.get("ppt_url"): continue
-            resp = requests.get(item["ppt_url"])
-            ext = ".ppt" if item["ppt_url"].lower().endswith(".ppt") else ".pptx"
+            ppt_url = item.get("ppt_url")
+            if not ppt_url: continue
+            
+            resp = requests.get(ppt_url)
+            ext = ".ppt" if ppt_url.lower().endswith(".ppt") else ".pptx"
             path = os.path.join(temp_dir, f"temp_{idx}{ext}")
+            
             with open(path, "wb") as f: f.write(resp.content)
+            
             if ext == ".ppt":
                 conv = convert_ppt_to_pptx(path)
                 if conv: processed_files.append(conv)
-            else: processed_files.append(path)
+            else:
+                processed_files.append(path)
 
-        # [중요] 처리할 파일이 하나도 없다면?
         if not processed_files:
-            st.error("선택한 곡 중에 유효한 PPT 파일이 없습니다.")
-            return None, None # None 하나가 아니라 두 개를 넘겨야 에러가 안 남
+            st.warning("선택된 곡 중에 유효한 PPT 파일이 없습니다.")
+            return None, None
     
         merged_prs = Presentation()
-        merged_prs.slide_width = Inches(13.333) # 16:9 표준 가로
-        merged_prs.slide_height = Inches(7.5)   # 16:9 표준 세로
+        merged_prs.slide_width = Inches(13.333)
+        merged_prs.slide_height = Inches(7.5)
 
         for path in processed_files:
             source = Presentation(path)
@@ -141,29 +164,25 @@ def merge_ppt_files(cart_items, custom_filename, credentials):
                 new_slide = merged_prs.slides.add_slide(layout)
                 for shape in slide.shapes:
                     if shape.shape_type == 13: # Picture
-                        # [수정] 원본 이미지를 16:9 슬라이드 크기에 꽉 채우기
                         new_slide.shapes.add_picture(
-                            io.BytesIO(shape.image.blob), 
-                            0, 0, # 시작 위치 (좌상단 0,0)
-                            width=merged_prs.slide_width, 
-                            height=merged_prs.slide_height
+                            io.BytesIO(shape.image.blob), 0, 0,
+                            width=merged_prs.slide_width, height=merged_prs.slide_height
                         )
         
-        # 파일 저장 및 업로드
         filename = f"{custom_filename}.pptx"
         local_path = os.path.join(temp_dir, filename)
         merged_prs.save(local_path)
-        # upload_to_drive 함수가 (file_url, folder_url) 두 개를 반환하는지 확인!
+        
         return upload_to_drive(local_path, filename, credentials)
 
     except Exception as e:
-        st.error(f"병합 중 오류 발생: {e}")
-        return None, None # 예외 발생 시에도 두 개의 값을 반환
+        st.error(f"병합 과정 오류: {e}")
+        return None, None
     finally:
         shutil.rmtree(temp_dir, ignore_errors=True)
 
 # -------------------------------
-# DIALOGS & SIDEBAR
+# DIALOGS
 # -------------------------------
 @st.dialog("곡 삭제 확인")
 def delete_confirm_dialog(song_id, title):
@@ -173,6 +192,9 @@ def delete_confirm_dialog(song_id, title):
         db.collection("songs").document(song_id).delete(); st.rerun()
     if c2.button("취소", use_container_width=True): st.rerun()
 
+# -------------------------------
+# SIDEBAR
+# -------------------------------
 with st.sidebar:
     st.header("🔐 구글 로그인")
     if st.session_state["credentials"] is None:
@@ -187,15 +209,6 @@ with st.sidebar:
 
     st.divider(); st.header("🛒 선택된 콘티")
     
-    # [변경] 성공 링크 표시 (장바구니 위에 고정하여 가독성 확보)
-    if st.session_state["slide_url"]:
-        st.success("🎉 슬라이드 생성 완료")
-
-
-    if st.session_state["merged_ppt_folder_url"]:
-        st.info("✅ 가사 PPT 저장 완료")
-    
-
     if st.session_state['cart']:
         custom_filename = st.text_input("📄 파일명", value=f"찬양콘티_{datetime.datetime.now().strftime('%y%m%d')}")
         for idx, item in enumerate(st.session_state['cart']):
@@ -208,8 +221,9 @@ with st.sidebar:
         if st.button("✨ 콘티 생성 (Slides)", type="primary", use_container_width=True):
             with st.spinner("슬라이드 생성 중..."):
                 url = create_praise_slides(st.session_state['cart'], custom_filename, get_google_credentials())
-                st.session_state["slide_url"] = url
-                st.rerun()
+                if url:
+                    st.session_state["slide_url"] = url
+                    st.rerun()
         
         if st.session_state["slide_url"]:
             col1, col2 = st.columns(2)
@@ -221,11 +235,14 @@ with st.sidebar:
         # --- 2. 가사 PPT 생성 (Drive Save) ---
         if st.button("📥 가사 PPT 생성 (Drive)", use_container_width=True):
             with st.spinner("PPT 병합 및 업로드 중..."):
-                # 파일 URL과 폴더 URL을 세션에 저장
                 f_url, fold_url = merge_ppt_files(st.session_state['cart'], custom_filename, get_google_credentials())
-                st.session_state["merged_ppt_url"] = f_url
-                st.session_state["merged_ppt_folder_url"] = fold_url
-                st.rerun()
+                if f_url and fold_url:
+                    st.session_state["merged_ppt_url"] = f_url
+                    st.session_state["merged_ppt_folder_url"] = fold_url
+                    # 성공 메시지를 위해 st.rerun() 대신 성공 표시만 함
+                    st.success("🎉 생성 및 업로드 완료!")
+                else:
+                    st.error("❌ 생성 실패. 위 에러 메시지를 확인하세요.")
 
         if st.session_state.get("merged_ppt_url"):
             col3, col4 = st.columns(2)
@@ -239,14 +256,20 @@ with st.sidebar:
     else: st.caption("곡을 담아주세요.")
 
 # -------------------------------
-# MAIN PAGE (기존 UI 유지)
+# MAIN PAGE
 # -------------------------------
-if st.session_state['page'] in ['add_song', 'edit_song']:
-    # (추가/수정 페이지 로직 생략 - 기존과 동일)
-    pass
+if st.session_state['page'] == 'add_song':
+    # 기존 코드의 추가 페이지 로직 (생략됨 - 필요시 추가)
+    st.write("곡 추가 페이지")
+    if st.button("돌아가기"): go_to_main(); st.rerun()
+elif st.session_state['page'] == 'edit_song':
+    # 기존 코드의 수정 페이지 로직 (생략됨 - 필요시 추가)
+    st.write("곡 수정 페이지")
+    if st.button("돌아가기"): go_to_main(); st.rerun()
 else:
     col_t, col_a = st.columns([5, 1]); col_t.title("🎵 Praise Maker")
     if col_a.button("곡 추가", type="primary", use_container_width=True): go_to_add(); st.rerun()
+    
     query = st.text_input("search", placeholder="제목, 태그, 키 검색", label_visibility="collapsed").strip().lower()
     docs = db.collection("songs").order_by("created_at", direction="DESCENDING").limit(50).stream()
     
@@ -260,6 +283,7 @@ else:
                 h_col.markdown(f"### {s['title']}")
                 if e_col.button("📝", key=f"e_{s['id']}"): go_to_edit(s)
                 if d_col.button("🗑️", key=f"d_{s['id']}"): delete_confirm_dialog(s['id'], s['title'])
+                
                 st.markdown(f"**Key:** {s['start_key']} | {' '.join([f'`#{t}`' for t in s.get('tags', [])])}")
                 
                 l1, l2, l3 = st.columns(3)
