@@ -1,0 +1,12 @@
+steps:
+  # 1. 도커 이미지를 빌드합니다.
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['build', '-t', 'gcr.io/$PROJECT_ID/praise-maker', '.']
+
+# 2. 빌드된 이미지를 저장소에 등록합니다.
+images:
+  - 'gcr.io/$PROJECT_ID/praise-maker'
+
+# 3. ★핵심★ 서비스 계정 사용 시 발생하는 로그 에러를 강제로 해결합니다.
+options:
+  logging: CLOUD_LOGGING_ONLY
