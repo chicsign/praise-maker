@@ -124,7 +124,11 @@ def merge_ppt_files(cart_items, custom_filename, credentials):
                 if conv: processed_files.append(conv)
             else: processed_files.append(path)
 
-        if not processed_files: return None
+        # [중요] 처리할 파일이 하나도 없다면?
+        if not processed_files:
+            st.error("선택한 곡 중에 유효한 PPT 파일이 없습니다.")
+            return None, None # None 하나가 아니라 두 개를 넘겨야 에러가 안 남
+    
         merged_prs = Presentation()
         merged_prs.slide_width = Inches(13.333) # 16:9 표준 가로
         merged_prs.slide_height = Inches(7.5)   # 16:9 표준 세로
@@ -145,11 +149,18 @@ def merge_ppt_files(cart_items, custom_filename, credentials):
                             height=merged_prs.slide_height
                         )
         
+        # 파일 저장 및 업로드
         filename = f"{custom_filename}.pptx"
         local_path = os.path.join(temp_dir, filename)
         merged_prs.save(local_path)
+        # upload_to_drive 함수가 (file_url, folder_url) 두 개를 반환하는지 확인!
         return upload_to_drive(local_path, filename, credentials)
-    finally: shutil.rmtree(temp_dir, ignore_errors=True)
+
+    except Exception as e:
+        st.error(f"병합 중 오류 발생: {e}")
+        return None, None # 예외 발생 시에도 두 개의 값을 반환
+    finally:
+        shutil.rmtree(temp_dir, ignore_errors=True)
 
 # -------------------------------
 # DIALOGS & SIDEBAR
