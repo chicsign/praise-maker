@@ -77,3 +77,6 @@ uritemplate==4.2.0
 urllib3==2.6.3
 watchdog==6.0.0
 xlsxwriter==3.2.9
+google-api-python-client
+google-auth-oauthlib
+google-auth-httplib2
