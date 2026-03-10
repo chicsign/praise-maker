@@ -12,7 +12,7 @@ import io
 from pptx import Presentation
 from services.firebase_service import db, bucket
 from services.google_slides_service import create_flow, create_praise_slides
-
+from pptx.util import Inches
 from google.oauth2.credentials import Credentials
 from streamlit_cookies_manager import EncryptedCookieManager
 from googleapiclient.discovery import build
@@ -126,6 +126,9 @@ def merge_ppt_files(cart_items, custom_filename, credentials):
 
         if not processed_files: return None
         merged_prs = Presentation()
+        merged_prs.slide_width = Inches(13.333) # 16:9 표준 가로
+        merged_prs.slide_height = Inches(7.5)   # 16:9 표준 세로
+
         for path in processed_files:
             source = Presentation(path)
             for slide in source.slides:
@@ -133,8 +136,14 @@ def merge_ppt_files(cart_items, custom_filename, credentials):
                 except IndexError: layout = merged_prs.slide_layouts[-1]
                 new_slide = merged_prs.slides.add_slide(layout)
                 for shape in slide.shapes:
-                    if shape.shape_type == 13:
-                        new_slide.shapes.add_picture(io.BytesIO(shape.image.blob), shape.left, shape.top, shape.width, shape.height)
+                    if shape.shape_type == 13: # Picture
+                        # [수정] 원본 이미지를 16:9 슬라이드 크기에 꽉 채우기
+                        new_slide.shapes.add_picture(
+                            io.BytesIO(shape.image.blob), 
+                            0, 0, # 시작 위치 (좌상단 0,0)
+                            width=merged_prs.slide_width, 
+                            height=merged_prs.slide_height
+                        )
         
         filename = f"{custom_filename}.pptx"
         local_path = os.path.join(temp_dir, filename)
