@@ -176,7 +176,7 @@ else:
     col_t, col_a = st.columns([5,1])
     col_t.title("🎵 Praise Maker")
 
-    if col_a.button("곡 추가", type="primary", use_container_width=True):
+    if col_a.button("찬양곡 추가", type="primary", use_container_width=True):
         go_to_add()
 
     query = st.text_input("검색", placeholder="곡 제목으로 검색", label_visibility="collapsed").strip().lower()
