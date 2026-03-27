@@ -34,38 +34,46 @@ if not cookies.ready(): st.stop()
 # SESSION INIT
 # -------------------------------
 for key, default in {
-    "credentials": None, "page": "main", "cart": [], 
+    "credentials": None, "user_email": None, "page": "main", "cart": [], 
     "slide_url": None, "merged_ppt_url": None, "merged_ppt_folder_url": None
 }.items():
     if key not in st.session_state: st.session_state[key] = default
 
 # -------------------------------
-# COOKIE -> SESSION 복원 & OAUTH CALLBACK
+# OAUTH & USER INFO
 # -------------------------------
+def get_user_info(creds):
+    try:
+        service = build('oauth2', 'v2', credentials=creds)
+        user_info = service.userinfo().get().execute()
+        return user_info.get("email")
+    except: return None
+
 if st.session_state["credentials"] is None:
     token, refresh = cookies.get("token"), cookies.get("refresh_token")
     if token and refresh:
-        try:
-            st.session_state["credentials"] = {
-                "token": token, "refresh_token": refresh,
-                "token_uri": "https://oauth2.googleapis.com/token",
-                "client_id": os.environ["GOOGLE_CLIENT_ID"],
-                "client_secret": os.environ["GOOGLE_CLIENT_SECRET"],
-                "scopes": ["https://www.googleapis.com/auth/presentations", "https://www.googleapis.com/auth/drive"]
-            }
-        except Exception:
-            pass
+        creds_dict = {
+            "token": token, "refresh_token": refresh,
+            "token_uri": "https://oauth2.googleapis.com/token",
+            "client_id": os.environ["GOOGLE_CLIENT_ID"],
+            "client_secret": os.environ["GOOGLE_CLIENT_SECRET"],
+            "scopes": ["https://www.googleapis.com/auth/presentations", "https://www.googleapis.com/auth/drive", "https://www.googleapis.com/auth/userinfo.email"]
+        }
+        st.session_state["credentials"] = creds_dict
+        st.session_state["user_email"] = get_user_info(Credentials(**creds_dict))
 
 if st.query_params.get("code") and st.session_state["credentials"] is None:
     try:
         flow = create_flow()
         flow.fetch_token(code=st.query_params["code"])
         creds = flow.credentials
-        st.session_state["credentials"] = {
+        creds_dict = {
             "token": creds.token, "refresh_token": creds.refresh_token,
             "token_uri": creds.token_uri, "client_id": creds.client_id,
             "client_secret": creds.client_secret, "scopes": creds.scopes
         }
+        st.session_state["credentials"] = creds_dict
+        st.session_state["user_email"] = get_user_info(creds)
         cookies["token"], cookies["refresh_token"] = creds.token, creds.refresh_token
         cookies.save()
         st.query_params.clear()
@@ -87,20 +95,14 @@ def go_to_edit(song_data):
     st.rerun()
 
 # -------------------------------
-# PPT & DRIVE LOGIC
+# PPT & DRIVE LOGIC (기존 로직 유지)
 # -------------------------------
 def convert_ppt_to_pptx(input_path):
     output_dir = os.path.dirname(input_path)
-    soffice = r'C:\Program Files\LibreOffice\program\soffice.exe' if platform.system() == "Windows" else 'soffice'
+    soffice = 'soffice'
     try:
-        if platform.system() == "Windows" and not os.path.exists(soffice):
-            st.error("Windows LibreOffice 경로를 찾을 수 없습니다.")
-            return None
-        
-        # Cloud Run(Linux)에서는 'soffice' 명령어가 PATH에 있어야 함
         subprocess.run([soffice, '--headless', '--convert-to', 'pptx', '--outdir', output_dir, input_path], 
-                       check=True, capture_output=True)
-        
+                        check=True, capture_output=True)
         base_name = os.path.splitext(os.path.basename(input_path))[0]
         return os.path.join(output_dir, base_name + ".pptx")
     except Exception as e: 
@@ -109,16 +111,19 @@ def convert_ppt_to_pptx(input_path):
 
 def upload_to_drive(file_path, filename, credentials):
     try:
-        if not credentials:
-            st.error("드라이브 업로드를 위한 인증 정보가 없습니다.")
-            return None, None
-            
+        if not credentials: return None, None
         service = build('drive', 'v3', credentials=credentials)
         FOLDER_ID = "1Lr_0MmneLOKNyKhW6TMl6V3L88TlBn5P" 
         file_metadata = {'name': filename, 'parents': [FOLDER_ID]}
         media = MediaFileUpload(file_path, mimetype='application/vnd.openxmlformats-officedocument.presentationml.presentation')
-        
         file = service.files().create(body=file_metadata, media_body=media, fields='id, webViewLink').execute()
+        
+        # [추가 기능] Firebase Storage에도 히스토리 저장
+        if st.session_state["user_email"]:
+            user_path = f"history/{st.session_state['user_email']}/{filename}"
+            hist_blob = bucket.blob(user_path)
+            hist_blob.upload_from_filename(file_path)
+            
         return file.get('webViewLink'), f"https://drive.google.com/drive/folders/{FOLDER_ID}"
     except Exception as e:
         st.error(f"구글 드라이브 업로드 중 에러: {e}")
@@ -128,172 +133,132 @@ def merge_ppt_files(cart_items, custom_filename, credentials):
     if not credentials:
         st.error("로그인이 필요합니다.")
         return None, None
-        
     temp_dir = tempfile.mkdtemp()
     processed_files = []
     try:
         for idx, item in enumerate(cart_items):
             ppt_url = item.get("ppt_url")
             if not ppt_url: continue
-            
             resp = requests.get(ppt_url)
             ext = ".ppt" if ppt_url.lower().endswith(".ppt") else ".pptx"
             path = os.path.join(temp_dir, f"temp_{idx}{ext}")
-            
             with open(path, "wb") as f: f.write(resp.content)
-            
             if ext == ".ppt":
                 conv = convert_ppt_to_pptx(path)
                 if conv: processed_files.append(conv)
-            else:
-                processed_files.append(path)
+            else: processed_files.append(path)
 
-        if not processed_files:
-            st.warning("선택된 곡 중에 유효한 PPT 파일이 없습니다.")
-            return None, None
-    
+        if not processed_files: return None, None
         merged_prs = Presentation()
-        merged_prs.slide_width = Inches(13.333)
-        merged_prs.slide_height = Inches(7.5)
-
+        merged_prs.slide_width, merged_prs.slide_height = Inches(13.333), Inches(7.5)
         for path in processed_files:
             source = Presentation(path)
             for slide in source.slides:
-                try: layout = merged_prs.slide_layouts[6]
-                except IndexError: layout = merged_prs.slide_layouts[-1]
+                layout = merged_prs.slide_layouts[6] if len(merged_prs.slide_layouts) > 6 else merged_prs.slide_layouts[-1]
                 new_slide = merged_prs.slides.add_slide(layout)
                 for shape in slide.shapes:
                     if shape.shape_type == 13: # Picture
-                        new_slide.shapes.add_picture(
-                            io.BytesIO(shape.image.blob), 0, 0,
-                            width=merged_prs.slide_width, height=merged_prs.slide_height
-                        )
+                        new_slide.shapes.add_picture(io.BytesIO(shape.image.blob), 0, 0, width=merged_prs.slide_width, height=merged_prs.slide_height)
         
         filename = f"{custom_filename}.pptx"
         local_path = os.path.join(temp_dir, filename)
         merged_prs.save(local_path)
-        
         return upload_to_drive(local_path, filename, credentials)
-
     except Exception as e:
         st.error(f"병합 과정 오류: {e}")
         return None, None
-    finally:
-        shutil.rmtree(temp_dir, ignore_errors=True)
+    finally: shutil.rmtree(temp_dir, ignore_errors=True)
 
 # -------------------------------
-# DIALOGS
+# PAGE: ADD SONG
 # -------------------------------
-@st.dialog("곡 삭제 확인")
-def delete_confirm_dialog(song_id, title):
-    st.write(f"'{title}' 곡을 삭제하시겠습니까?")
-    c1, c2 = st.columns(2)
-    if c1.button("삭제", type="primary", use_container_width=True):
-        db.collection("songs").document(song_id).delete(); st.rerun()
-    if c2.button("취소", use_container_width=True): st.rerun()
+def show_add_song_page():
+    st.title("➕ 새 곡 추가")
+    with st.form("add_song_form"):
+        col1, col2 = st.columns(2)
+        title = col1.text_input("곡 제목*")
+        start_key = col2.text_input("Key (예: G)")
+        youtube_url = st.text_input("YouTube 링크")
+        tags_input = st.text_input("태그 (쉼표 구분)")
+        
+        st.divider()
+        c3, c4 = st.columns(2)
+        image_file = c3.file_uploader("악보 이미지", type=['jpg', 'jpeg', 'png'])
+        ppt_file = c4.file_uploader("가사 PPT", type=['ppt', 'pptx'])
+        
+        if st.form_submit_button("저장하기", type="primary", use_container_width=True):
+            if not title: st.error("제목을 입력하세요.")
+            else:
+                with st.spinner("Firebase 업로드 중..."):
+                    data = {"title": title, "start_key": start_key, "youtube_url": youtube_url, 
+                            "tags": [t.strip() for t in tags_input.split(",")] if tags_input else [],
+                            "created_at": datetime.datetime.now(), "image_url": "", "ppt_url": ""}
+                    if image_file:
+                        blob = bucket.blob(f"songs/images/{image_file.name}")
+                        blob.upload_from_file(image_file, content_type=image_file.type)
+                        blob.make_public(); data["image_url"] = blob.public_url
+                    if ppt_file:
+                        blob = bucket.blob(f"songs/ppts/{ppt_file.name}")
+                        blob.upload_from_file(ppt_file, content_type=ppt_file.type)
+                        blob.make_public(); data["ppt_url"] = blob.public_url
+                    db.collection("songs").add(data)
+                    st.success("저장 완료!"); go_to_main(); st.rerun()
+    if st.button("돌아가기"): go_to_main(); st.rerun()
 
 # -------------------------------
-# SIDEBAR
+# SIDEBAR & MAIN
 # -------------------------------
 with st.sidebar:
     st.header("🔐 구글 로그인")
     if st.session_state["credentials"] is None:
         flow = create_flow()
         auth_url, _ = flow.authorization_url(access_type="offline", prompt="consent")
-        st.markdown(f'<a href="{auth_url}" target="_self" style="text-decoration: none;"><div style="display: flex; align-items: center; justify-content: center; background-color: #ffffff; color: #757575; border-radius: 4px; border: 1px solid #dadce0; padding: 10px 15px; font-family: \'Roboto\', arial, sans-serif; font-weight: 500; cursor: pointer; box-shadow: 0 1px 1px 0 rgba(66,133,244,.15);"> <img src="https://fonts.gstatic.com/s/i/productlogos/googleg/v6/24px.svg" width="20px" height="20px" style="margin-right: 12px;"> Google 로그인 </div></a>', unsafe_allow_html=True)
+        st.markdown(f'<a href="{auth_url}" target="_self" style="text-decoration: none;"><div style="background-color: white; color: #757575; border-radius: 4px; border: 1px solid #dadce0; padding: 10px; text-align: center; font-weight: 500;">Google 로그인</div></a>', unsafe_allow_html=True)
     else:
-        st.success("✅ 로그인 유지됨")
-        if st.button("로그아웃", use_container_width=True):
-            st.session_state["credentials"] = None
+        st.success(f"✅ {st.session_state['user_email']} 님")
+        if st.button("로그아웃"):
+            st.session_state.update({"credentials": None, "user_email": None})
             cookies["token"] = ""; cookies["refresh_token"] = ""; cookies.save(); st.rerun()
 
     st.divider(); st.header("🛒 선택된 콘티")
-    
     if st.session_state['cart']:
-        custom_filename = st.text_input("📄 파일명", value=f"찬양콘티_{datetime.datetime.now().strftime('%y%m%d')}")
+        custom_filename = st.text_input("📄 파일명", value=f"콘티_{datetime.datetime.now().strftime('%y%m%d')}")
         for idx, item in enumerate(st.session_state['cart']):
             with st.container(border=True):
-                h1, h2 = st.columns([4, 1])
-                h1.write(f"**{idx+1}. {item['title']}**")
-                if h2.button("X", key=f"del_{idx}"): st.session_state['cart'].pop(idx); st.rerun()
+                c1, c2 = st.columns([4, 1])
+                c1.write(f"{idx+1}. {item['title']}")
+                if c2.button("X", key=f"cart_del_{idx}"): st.session_state['cart'].pop(idx); st.rerun()
         
-        # --- 1. 콘티 생성 (Google Slides) ---
         if st.button("✨ 콘티 생성 (Slides)", type="primary", use_container_width=True):
-            with st.spinner("슬라이드 생성 중..."):
-                url = create_praise_slides(st.session_state['cart'], custom_filename, get_google_credentials())
-                if url:
-                    st.session_state["slide_url"] = url
-                    st.rerun()
+            url = create_praise_slides(st.session_state['cart'], custom_filename, get_google_credentials())
+            if url: st.session_state["slide_url"] = url; st.rerun()
         
-        if st.session_state["slide_url"]:
-            col1, col2 = st.columns(2)
-            col1.link_button("📄 파일 열기", st.session_state['slide_url'], use_container_width=True)
-            col2.link_button("📂 폴더 열기", f"https://drive.google.com/drive/folders/1Lr_0MmneLOKNyKhW6TMl6V3L88TlBn5P", use_container_width=True)
-
-        st.write("")
-
-        # --- 2. 가사 PPT 생성 (Drive Save) ---
         if st.button("📥 가사 PPT 생성 (Drive)", use_container_width=True):
-            with st.spinner("PPT 병합 및 업로드 중..."):
-                f_url, fold_url = merge_ppt_files(st.session_state['cart'], custom_filename, get_google_credentials())
-                if f_url and fold_url:
-                    st.session_state["merged_ppt_url"] = f_url
-                    st.session_state["merged_ppt_folder_url"] = fold_url
-                    # 성공 메시지를 위해 st.rerun() 대신 성공 표시만 함
-                    st.success("🎉 생성 및 업로드 완료!")
-                else:
-                    st.error("❌ 생성 실패. 위 에러 메시지를 확인하세요.")
+            f_url, fold_url = merge_ppt_files(st.session_state['cart'], custom_filename, get_google_credentials())
+            if f_url: st.session_state.update({"merged_ppt_url": f_url, "merged_ppt_folder_url": fold_url}); st.success("생성 완료!")
 
         if st.session_state.get("merged_ppt_url"):
-            col3, col4 = st.columns(2)
-            col3.link_button("📄 파일 열기", st.session_state['merged_ppt_url'], use_container_width=True)
-            col4.link_button("📂 폴더 열기", st.session_state['merged_ppt_folder_url'], use_container_width=True)
-
-        st.divider()
-        if st.button("🗑️ 전체 초기화", use_container_width=True):
-            st.session_state.update({"cart": [], "slide_url": None, "merged_ppt_url": None, "merged_ppt_folder_url": None})
-            st.rerun()
+            st.link_button("📄 파일 열기", st.session_state['merged_ppt_url'], use_container_width=True)
+            
+        if st.button("🗑️ 초기화"): st.session_state.update({"cart": [], "slide_url": None, "merged_ppt_url": None}); st.rerun()
     else: st.caption("곡을 담아주세요.")
 
-# -------------------------------
-# MAIN PAGE
-# -------------------------------
-if st.session_state['page'] == 'add_song':
-    # 기존 코드의 추가 페이지 로직 (생략됨 - 필요시 추가)
-    st.write("곡 추가 페이지")
-    if st.button("돌아가기"): go_to_main(); st.rerun()
-elif st.session_state['page'] == 'edit_song':
-    # 기존 코드의 수정 페이지 로직 (생략됨 - 필요시 추가)
-    st.write("곡 수정 페이지")
-    if st.button("돌아가기"): go_to_main(); st.rerun()
+# 페이지 라우팅
+if st.session_state['page'] == 'add_song': show_add_song_page()
+elif st.session_state['page'] == 'edit_song': st.write("수정 페이지 준비 중"); st.button("홈", on_click=go_to_main)
 else:
-    col_t, col_a = st.columns([5, 1]); col_t.title("🎵 Praise Maker")
-    if col_a.button("곡 추가", type="primary", use_container_width=True): go_to_add(); st.rerun()
+    col_t, col_a = st.columns([5, 1])
+    col_t.title("🎵 Praise Maker")
+    if col_a.button("곡 추가", type="primary"): go_to_add(); st.rerun()
     
-    query = st.text_input("search", placeholder="제목, 태그, 키 검색", label_visibility="collapsed").strip().lower()
+    query = st.text_input("search", label_visibility="collapsed").strip().lower()
     docs = db.collection("songs").order_by("created_at", direction="DESCENDING").limit(50).stream()
-    
-    button_style = "display:flex; align-items:center; justify-content:center; background-color:#F0F2F6; color:#262730; padding:8px; border-radius:6px; text-decoration:none; font-weight:600; border:1px solid #E6E9EF; height:38px;"
     
     for doc in docs:
         s = doc.to_dict(); s['id'] = doc.id
-        if not query or query in s.get('title','').lower() or query in s.get('start_key','').lower() or any(query in t.lower() for t in s.get('tags', [])):
+        if not query or query in s.get('title','').lower():
             with st.container(border=True):
-                h_col, e_col, d_col = st.columns([8, 0.6, 0.6])
-                h_col.markdown(f"### {s['title']}")
-                if e_col.button("📝", key=f"e_{s['id']}"): go_to_edit(s)
-                if d_col.button("🗑️", key=f"d_{s['id']}"): delete_confirm_dialog(s['id'], s['title'])
-                
-                st.markdown(f"**Key:** {s['start_key']} | {' '.join([f'`#{t}`' for t in s.get('tags', [])])}")
-                
-                l1, l2, l3 = st.columns(3)
-                if s.get("youtube_url"):
-                    l1.markdown(f'<a href="{s["youtube_url"]}" target="_blank" style="{button_style}"><img src="https://upload.wikimedia.org/wikipedia/commons/7/75/YouTube_social_white_squircle_%282017%29.svg" width="18" style="margin-right:8px;">YouTube</a>', unsafe_allow_html=True)
-                if s.get("image_url"):
-                    l2.markdown(f'<a href="{s["image_url"]}" target="_blank" style="{button_style}">악보</a>', unsafe_allow_html=True)
-                if s.get("ppt_url"):
-                    l3.markdown(f'<a href="{s["ppt_url"]}" target="_blank" style="{button_style}">PPTX</a>', unsafe_allow_html=True)
-                
-                if st.button("리스트에 담기", key=f"c_{s['id']}", use_container_width=True, type="primary"):
-                    if not any(item['id'] == s['id'] for item in st.session_state['cart']):
+                st.markdown(f"### {s['title']} ({s['start_key']})")
+                if st.button("리스트에 담기", key=f"add_{s['id']}", use_container_width=True):
+                    if not any(i['id'] == s['id'] for i in st.session_state['cart']):
                         st.session_state['cart'].append(s); st.rerun()
