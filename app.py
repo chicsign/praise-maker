@@ -85,7 +85,7 @@ def go_to_add():
 # PAGE: ADD SONG (곡 추가 화면)
 # -------------------------------
 def show_add_song_page():
-    st.title("➕ 새 곡 추가")
+    st.title("신곡 추가")
     
     if st.button("⬅️ 돌아가기"):
         go_to_main()
