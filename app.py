@@ -2,8 +2,11 @@ import streamlit as st
 import datetime
 import os
 import io
-import requests # [에러 해결] requests 모듈 추가
+import requests
 import tempfile
+import shutil
+import subprocess
+import platform
 from pptx import Presentation
 
 from services.firebase_service import db, bucket
@@ -83,45 +86,106 @@ if st.query_params.get("code") and st.session_state["credentials"] is None:
     except Exception as e: st.error(f"로그인 오류: {e}")
 
 # -------------------------------
-# 가사 PPT 생성 및 업로드
+# 가사 PPT 생성 및 업로드 (수정됨)
 # -------------------------------
 def merge_and_upload_ppt(cart_items, filename):
     creds = Credentials(**st.session_state["credentials"])
+
     with st.spinner("가사 PPT 제작 중..."):
+        temp_dir = tempfile.mkdtemp()
+
         try:
+            processed_files = []
+
+            for idx, item in enumerate(cart_items):
+                if not item.get("ppt_url"):
+                    continue
+
+                response = requests.get(item["ppt_url"])
+
+                ext = ".ppt" if item["ppt_url"].lower().endswith(".ppt") else ".pptx"
+                temp_path = os.path.join(temp_dir, f"temp_{idx}{ext}")
+
+                with open(temp_path, "wb") as f:
+                    f.write(response.content)
+
+                if ext == ".ppt":
+                    output_dir = os.path.dirname(temp_path)
+                    soffice = r'C:\Program Files\LibreOffice\program\soffice.exe' if platform.system() == "Windows" else 'soffice'
+
+                    if platform.system() == "Windows" and not os.path.exists(soffice):
+                        st.error("LibreOffice 설치 경로를 확인해주세요.")
+                        return
+
+                    subprocess.run(
+                        [soffice, '--headless', '--convert-to', 'pptx', '--outdir', output_dir, temp_path],
+                        check=True
+                    )
+
+                    temp_path = os.path.join(
+                        output_dir,
+                        os.path.splitext(os.path.basename(temp_path))[0] + ".pptx"
+                    )
+
+                processed_files.append(temp_path)
+
+            if not processed_files:
+                st.error("PPT 파일이 없습니다.")
+                return
+
             merged_pptx = Presentation()
-            # 빈 슬라이드 레이아웃 설정
-            blank_slide_layout = merged_pptx.slide_layouts[6]
 
-            for item in cart_items:
-                if item.get("ppt_url"):
-                    # [에러 해결] 다운로드 시 requests 사용
-                    response = requests.get(item["ppt_url"])
-                    with tempfile.NamedTemporaryFile(delete=False, suffix=".pptx") as tmp:
-                        tmp.write(response.content)
-                        tmp_path = tmp.name
-                    
-                    # (병합 로직 수행 - 예시로 새 슬라이드만 추가)
-                    source_ppt = Presentation(tmp_path)
-                    for slide in source_ppt.slides:
-                        # (최소한의 복사 로직)
-                        merged_pptx.slides.add_slide(blank_slide_layout)
+            for path in processed_files:
+                source_ppt = Presentation(path)
 
-                    os.remove(tmp_path)
+                for slide in source_ppt.slides:
+                    new_slide = merged_pptx.slides.add_slide(merged_pptx.slide_layouts[6])
 
-            output = io.BytesIO()
-            merged_pptx.save(output)
-            output.seek(0)
+                    for shape in slide.shapes:
+                        if shape.shape_type == 13:
+                            new_slide.shapes.add_picture(
+                                io.BytesIO(shape.image.blob),
+                                shape.left,
+                                shape.top,
+                                shape.width,
+                                shape.height
+                            )
+                        elif shape.has_text_frame:
+                            textbox = new_slide.shapes.add_textbox(
+                                shape.left,
+                                shape.top,
+                                shape.width,
+                                shape.height
+                            )
+                            textbox.text_frame.text = shape.text
+
+            output_path = os.path.join(temp_dir, f"{filename}.pptx")
+            merged_pptx.save(output_path)
 
             drive_service = build('drive', 'v3', credentials=creds)
+
             file_metadata = {'name': f"{filename}.pptx", 'parents': [TARGET_FOLDER_ID]}
-            media = MediaFileUpload(output, mimetype='application/vnd.openxmlformats-officedocument.presentationml.presentation', resumable=True)
-            file = drive_service.files().create(body=file_metadata, media_body=media, fields='id, webViewLink').execute()
-            
+
+            media = MediaFileUpload(
+                output_path,
+                mimetype='application/vnd.openxmlformats-officedocument.presentationml.presentation'
+            )
+
+            file = drive_service.files().create(
+                body=file_metadata,
+                media_body=media,
+                fields='id, webViewLink'
+            ).execute()
+
             st.session_state["slide_url"] = file.get("webViewLink")
             st.success("가사 PPT 업로드 완료")
             st.rerun()
-        except Exception as e: st.error(f"PPT 작업 중 오류: {e}")
+
+        except Exception as e:
+            st.error(f"PPT 작업 중 오류: {e}")
+
+        finally:
+            shutil.rmtree(temp_dir, ignore_errors=True)
 
 # -------------------------------
 # 삭제 확인 다이얼로그
@@ -143,7 +207,6 @@ def show_add_edit_page(mode="add"):
     song = st.session_state.get("editing_song", {}) if mode == "edit" else {}
     
     if st.button("돌아가기"):
-        # go_to_main() 로직 대체
         st.session_state.update({"page": "main", "editing_song": None})
         st.rerun()
 
@@ -242,7 +305,6 @@ else:
                 st.session_state.update({"cart": [], "slide_url": None}); st.rerun()
         else: st.caption("곡을 담아주세요")
 
-    # 메인 목록
     t1, t2 = st.columns([5,1])
     t1.title("Praise Maker")
     if t2.button("찬양곡 추가", type="primary", use_container_width=True):
@@ -251,7 +313,6 @@ else:
     query = st.text_input("검색", placeholder="제목 또는 태그 검색", label_visibility="collapsed").strip().lower()
     docs = db.collection("songs").order_by("created_at", direction="DESCENDING").limit(50).stream()
 
-    # 링크 버튼 스타일 정의 (유튜브 아이콘 지원용)
     btn_style = "display:flex; align-items:center; justify-content:center; background-color:#F0F2F6; color:#262730; padding:5px 10px; border-radius:5px; text-decoration:none; font-size:13px; border:1px solid #E6E9EF; gap:5px;"
 
     for doc in docs:
@@ -259,7 +320,6 @@ else:
         match = not query or query in s.get("title","").lower() or any(query in t.lower() for t in s.get("tags", []))
         if match:
             with st.container(border=True):
-                # 제목, 수정, 삭제 버튼 배치
                 h1, h2, h3 = st.columns([8, 1, 1])
                 h1.markdown(f"### {s['title']} ({s.get('start_key','')})")
                 if h2.button("수정", key=f"edit_{s['id']}", use_container_width=True):
@@ -270,11 +330,9 @@ else:
                 if s.get("tags"):
                     st.markdown(" ".join([f"`#{t}`" for t in s.get("tags", [])]))
                 
-                # 링크 버튼 배치
                 l1, l2, l3 = st.columns(3)
                 if s.get("youtube_url"):
-                    # [이미지 추가] 유튜브 아이콘 추가
-                    youtube_icon_url = "https://upload.wikimedia.org/wikipedia/commons/e/ef/Youtube_logo.png" # 간략한 유튜브 로고 이미지
+                    youtube_icon_url = "https://upload.wikimedia.org/wikipedia/commons/e/ef/Youtube_logo.png"
                     l1.markdown(f'<a href="{s["youtube_url"]}" target="_blank" style="{btn_style}"><img src="{youtube_icon_url}" width="18" height="13">YouTube</a>', unsafe_allow_html=True)
                 if s.get("image_url"):
                     l2.markdown(f'<a href="{s["image_url"]}" target="_blank" style="{btn_style}">악보 이미지</a>', unsafe_allow_html=True)
