@@ -1,4 +1,4 @@
-import streamlit as st
+import streamlit as st 
 import datetime
 import os
 import io
@@ -8,6 +8,7 @@ import shutil
 import subprocess
 import platform
 from pptx import Presentation
+from pptx.util import Inches
 
 from services.firebase_service import db, bucket
 from services.google_slides_service import create_flow, create_praise_slides
@@ -40,7 +41,8 @@ if not cookies.ready():
 # -------------------------------
 session_keys = {
     "credentials": None, "user_email": None, "page": "main", 
-    "cart": [], "editing_song": None, "slide_url": None
+    "cart": [], "editing_song": None, "slide_url": None,
+    "ppt_slide_url": None
 }
 for key, default in session_keys.items():
     if key not in st.session_state:
@@ -133,22 +135,25 @@ def merge_and_upload_ppt(cart_items, filename):
                 st.error("PPT 파일이 없습니다.")
                 return
 
-            merged_pptx = Presentation()
+            merged_prs = Presentation()
+
+           # 16:9 비율 (명확한 단위 표현)
+            merged_prs.slide_width = Inches(13.333)
+            merged_prs.slide_height = Inches(7.5)
 
             for path in processed_files:
                 source_ppt = Presentation(path)
 
                 for slide in source_ppt.slides:
-                    new_slide = merged_pptx.slides.add_slide(merged_pptx.slide_layouts[6])
+                    new_slide = merged_prs.slides.add_slide(merged_prs.slide_layouts[6])
 
                     for shape in slide.shapes:
                         if shape.shape_type == 13:
                             new_slide.shapes.add_picture(
-                                io.BytesIO(shape.image.blob),
-                                shape.left,
-                                shape.top,
-                                shape.width,
-                                shape.height
+                                io.BytesIO(shape.image.blob), 
+                                0, 0,
+                                width=merged_prs.slide_width,
+                                height=merged_prs.slide_height
                             )
                         elif shape.has_text_frame:
                             textbox = new_slide.shapes.add_textbox(
@@ -160,7 +165,7 @@ def merge_and_upload_ppt(cart_items, filename):
                             textbox.text_frame.text = shape.text
 
             output_path = os.path.join(temp_dir, f"{filename}.pptx")
-            merged_pptx.save(output_path)
+            merged_prs.save(output_path)
 
             drive_service = build('drive', 'v3', credentials=creds)
 
@@ -177,7 +182,7 @@ def merge_and_upload_ppt(cart_items, filename):
                 fields='id, webViewLink'
             ).execute()
 
-            st.session_state["slide_url"] = file.get("webViewLink")
+            st.session_state["ppt_slide_url"] = file.get("webViewLink")
             st.success("가사 PPT 업로드 완료")
             st.rerun()
 
@@ -213,7 +218,28 @@ def show_add_edit_page(mode="add"):
     with st.form("song_form", clear_on_submit=True):
         col1, col2 = st.columns(2)
         title = col1.text_input("곡 이름 *", value=song.get("title", ""))
-        start_key = col2.text_input("Key", value=song.get("start_key", ""))
+
+        # 수정된 Key 입력 방식
+        base_key = col2.selectbox(
+            "Key",
+            ["C","D","E","F","G","A","B"],
+            index=0
+        )
+
+        c_sharp, c_flat = st.columns(2)
+        is_sharp = c_sharp.checkbox("#")
+        is_flat = c_flat.checkbox("b")
+
+        if is_sharp and is_flat:
+            st.warning("# 또는 b 중 하나만 선택하세요")
+            start_key = base_key
+        else:
+            if is_sharp:
+                start_key = base_key + "#"
+            elif is_flat:
+                start_key = base_key + "b"
+            else:
+                start_key = base_key
         
         youtube_url = st.text_input("YouTube 링크", value=song.get("youtube_url", ""))
         tags_input = st.text_input("태그 (쉼표 구분)", value=", ".join(song.get("tags", [])) if song.get("tags") else "")
@@ -221,12 +247,12 @@ def show_add_edit_page(mode="add"):
         st.write("---")
         st.subheader("파일 업로드")
         c3, c4 = st.columns(2)
-        image_file = c3.file_uploader("악보 이미지", type=["jpg","png"])
-        ppt_file = c4.file_uploader("가사 PPT", type=["ppt","pptx"])
+        image_file = c3.file_uploader("악보 이미지 *", type=["jpg","png"])
+        ppt_file = c4.file_uploader("가사 PPT *", type=["ppt","pptx"])
 
         if st.form_submit_button("저장하기", type="primary", use_container_width=True):
-            if not title:
-                st.error("곡 이름은 필수입니다")
+            if not title or not image_file or not ppt_file:
+                st.error("곡 이름, 악보 이미지, 가사 PPT는 필수입니다")
             else:
                 with st.spinner("데이터 저장 중..."):
                     try:
@@ -236,14 +262,13 @@ def show_add_edit_page(mode="add"):
                             "created_at": song.get("created_at", datetime.datetime.now()),
                             "image_url": song.get("image_url", ""), "ppt_url": song.get("ppt_url", "")
                         }
-                        if image_file:
-                            blob = bucket.blob(f"songs/images/{datetime.datetime.now().strftime('%H%M%S')}_{image_file.name}")
-                            blob.upload_from_file(image_file, content_type=image_file.type)
-                            blob.make_public(); data["image_url"] = blob.public_url
-                        if ppt_file:
-                            blob = bucket.blob(f"songs/ppts/{datetime.datetime.now().strftime('%H%M%S')}_{ppt_file.name}")
-                            blob.upload_from_file(ppt_file, content_type=ppt_file.type)
-                            blob.make_public(); data["ppt_url"] = blob.public_url
+                        blob = bucket.blob(f"songs/images/{datetime.datetime.now().strftime('%H%M%S')}_{image_file.name}")
+                        blob.upload_from_file(image_file, content_type=image_file.type)
+                        blob.make_public(); data["image_url"] = blob.public_url
+
+                        blob = bucket.blob(f"songs/ppts/{datetime.datetime.now().strftime('%H%M%S')}_{ppt_file.name}")
+                        blob.upload_from_file(ppt_file, content_type=ppt_file.type)
+                        blob.make_public(); data["ppt_url"] = blob.public_url
 
                         if mode == "add": db.collection("songs").add(data)
                         else: db.collection("songs").document(song["id"]).update(data)
@@ -283,6 +308,7 @@ else:
             for idx, item in enumerate(st.session_state["cart"]):
                 st.write(f"{idx+1}. {item['title']}")
             
+            st.subheader("슬라이드 생성")
             if st.button("슬라이드 생성", type="primary", use_container_width=True):
                 creds = Credentials(**st.session_state["credentials"])
                 url = create_praise_slides(st.session_state["cart"], fname, creds)
@@ -290,19 +316,25 @@ else:
                     st.session_state["slide_url"] = url
                     st.rerun()
 
+            if st.session_state.get("slide_url"):
+                st.link_button("슬라이드 파일 열기", st.session_state["slide_url"], use_container_width=True)
+                st.link_button("슬라이드 폴더 열기", TARGET_FOLDER_URL, use_container_width=True)
+
+            st.divider()
+
+            st.subheader("가사 PPT 생성")
             if st.button("가사 PPT 생성", use_container_width=True):
                 if st.session_state["credentials"]:
                     merge_and_upload_ppt(st.session_state["cart"], fname)
                 else:
                     st.error("구글 로그인이 필요합니다.")
 
-            if st.session_state.get("slide_url"):
-                st.divider()
-                st.link_button("생성된 파일 열기", st.session_state["slide_url"], use_container_width=True)
-                st.link_button("파일이 저장된 폴더 열기", TARGET_FOLDER_URL, use_container_width=True)
+            if st.session_state.get("ppt_slide_url"):
+                st.link_button("PPT 파일 열기", st.session_state["ppt_slide_url"], use_container_width=True)
+                st.link_button("PPT 폴더 열기", TARGET_FOLDER_URL, use_container_width=True)
 
             if st.button("전체 초기화"):
-                st.session_state.update({"cart": [], "slide_url": None}); st.rerun()
+                st.session_state.update({"cart": [], "slide_url": None, "ppt_slide_url": None}); st.rerun()
         else: st.caption("곡을 담아주세요")
 
     t1, t2 = st.columns([5,1])
