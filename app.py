@@ -148,6 +148,7 @@ def merge_and_upload_ppt(cart_items, filename):
                     new_slide = merged_prs.slides.add_slide(merged_prs.slide_layouts[6])
 
                     for shape in slide.shapes:
+                        # 이미지만 가져오기 (텍스트 상자 제외)
                         if shape.shape_type == 13:
                             new_slide.shapes.add_picture(
                                 io.BytesIO(shape.image.blob), 
@@ -155,14 +156,6 @@ def merge_and_upload_ppt(cart_items, filename):
                                 width=merged_prs.slide_width,
                                 height=merged_prs.slide_height
                             )
-                        elif shape.has_text_frame:
-                            textbox = new_slide.shapes.add_textbox(
-                                shape.left,
-                                shape.top,
-                                shape.width,
-                                shape.height
-                            )
-                            textbox.text_frame.text = shape.text
 
             output_path = os.path.join(temp_dir, f"{filename}.pptx")
             merged_prs.save(output_path)
@@ -310,11 +303,14 @@ else:
             
             st.subheader("슬라이드 생성")
             if st.button("슬라이드 생성", type="primary", use_container_width=True):
-                creds = Credentials(**st.session_state["credentials"])
-                url = create_praise_slides(st.session_state["cart"], fname, creds)
-                if url: 
-                    st.session_state["slide_url"] = url
-                    st.rerun()
+                if st.session_state["credentials"]:
+                    creds = Credentials(**st.session_state["credentials"])
+                    url = create_praise_slides(st.session_state["cart"], fname, creds)
+                    if url: 
+                        st.session_state["slide_url"] = url
+                        st.rerun()
+                else:
+                    st.error("구글 로그인이 필요합니다.")
 
             if st.session_state.get("slide_url"):
                 st.link_button("슬라이드 파일 열기", st.session_state["slide_url"], use_container_width=True)
