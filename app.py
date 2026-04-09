@@ -209,19 +209,21 @@ def show_add_edit_page(mode="add"):
         st.rerun()
 
     with st.form("song_form", clear_on_submit=True):
-        col1, col2 = st.columns(2)
+        col1, col2 = st.columns([2, 1])
         title = col1.text_input("곡 이름 *", value=song.get("title", ""))
 
-        # 수정된 Key 입력 방식
-        base_key = col2.selectbox(
-            "Key",
-            ["C","D","E","F","G","A","B"],
-            index=0
-        )
-
-        c_sharp, c_flat = st.columns(2)
-        is_sharp = c_sharp.checkbox("#")
-        is_flat = c_flat.checkbox("b")
+        # Key 선택 박스와 #/b 체크박스를 한 줄에 배치
+        with col2:
+            st.write("Key")
+            k_col1, k_col2, k_col3 = st.columns([2, 1, 1])
+            base_key = k_col1.selectbox(
+                "Key",
+                ["C","D","E","F","G","A","B"],
+                index=0,
+                label_visibility="collapsed"
+            )
+            is_sharp = k_col2.checkbox("#")
+            is_flat = k_col3.checkbox("b")
 
         if is_sharp and is_flat:
             st.warning("# 또는 b 중 하나만 선택하세요")
@@ -240,8 +242,9 @@ def show_add_edit_page(mode="add"):
         st.write("---")
         st.subheader("파일 업로드")
         c3, c4 = st.columns(2)
-        image_file = c3.file_uploader("악보 이미지 *", type=["jpg","png"])
-        ppt_file = c4.file_uploader("가사 PPT *", type=["ppt","pptx"])
+        # AxiosError 400 방지를 위해 file_uploader의 key 값 명시 및 데이터 폼 분리 고려
+        image_file = c3.file_uploader("악보 이미지 *", type=["jpg","png","jpeg"], key="img_up")
+        ppt_file = c4.file_uploader("가사 PPT *", type=["ppt","pptx"], key="ppt_up")
 
         if st.form_submit_button("저장하기", type="primary", use_container_width=True):
             if not title or not image_file or not ppt_file:
@@ -255,11 +258,14 @@ def show_add_edit_page(mode="add"):
                             "created_at": song.get("created_at", datetime.datetime.now()),
                             "image_url": song.get("image_url", ""), "ppt_url": song.get("ppt_url", "")
                         }
-                        blob = bucket.blob(f"songs/images/{datetime.datetime.now().strftime('%H%M%S')}_{image_file.name}")
+                        # 파일 이름에서 특수문자 제거하여 에러 방지
+                        safe_img_name = "".join([c for c in image_file.name if c.isalnum() or c in "._- "]).strip()
+                        blob = bucket.blob(f"songs/images/{datetime.datetime.now().strftime('%H%M%S')}_{safe_img_name}")
                         blob.upload_from_file(image_file, content_type=image_file.type)
                         blob.make_public(); data["image_url"] = blob.public_url
 
-                        blob = bucket.blob(f"songs/ppts/{datetime.datetime.now().strftime('%H%M%S')}_{ppt_file.name}")
+                        safe_ppt_name = "".join([c for c in ppt_file.name if c.isalnum() or c in "._- "]).strip()
+                        blob = bucket.blob(f"songs/ppts/{datetime.datetime.now().strftime('%H%M%S')}_{safe_ppt_name}")
                         blob.upload_from_file(ppt_file, content_type=ppt_file.type)
                         blob.make_public(); data["ppt_url"] = blob.public_url
 
