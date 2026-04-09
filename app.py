@@ -6,6 +6,7 @@ from services.firebase_service import db, bucket
 from services.google_slides_service import create_flow, create_praise_slides
 from google.oauth2.credentials import Credentials
 from streamlit_cookies_manager import EncryptedCookieManager
+from googleapiclient.discovery import build
 
 # 로컬 테스트 시 OAuth 보안 연결 허용 설정
 os.environ['OAUTHLIB_INSECURE_TRANSPORT'] = '1'
@@ -13,7 +14,7 @@ os.environ['OAUTHLIB_INSECURE_TRANSPORT'] = '1'
 st.set_page_config(page_title="Praise Maker", layout="wide")
 
 # -------------------------------
-# 쿠키 매니저 설정 (로그인 세션 유지)
+# 쿠키 매니저 설정 (로그인 세션 유지용)
 # -------------------------------
 cookies = EncryptedCookieManager(
     prefix="praise_maker/",
@@ -26,29 +27,72 @@ if not cookies.ready():
 # 세션 상태 초기화
 # -------------------------------
 for key, default in {
-    "credentials": None, "page": "main", "cart": [], 
-    "editing_song": None, "slide_url": None
+    "credentials": None, "user_email": None, "page": "main", 
+    "cart": [], "editing_song": None, "slide_url": None
 }.items():
     if key not in st.session_state:
         st.session_state[key] = default
 
 # -------------------------------
-# 쿠키 데이터를 세션으로 복원
+# 사용자 정보 가져오기 함수
 # -------------------------------
+def get_user_info(creds):
+    try:
+        service = build('oauth2', 'v2', credentials=creds)
+        user_info = service.userinfo().get().execute()
+        return user_info.get("email")
+    except:
+        return None
+
+# -------------------------------
+# 구글 인증 정보 복구 및 콜백 처리 (결제/인증 로직)
+# -------------------------------
+# 1. 쿠키에 저장된 토큰이 있다면 세션으로 복구
 if st.session_state["credentials"] is None:
     token, refresh = cookies.get("token"), cookies.get("refresh_token")
     if token and refresh:
-        st.session_state["credentials"] = {
+        creds_dict = {
             "token": token, "refresh_token": refresh,
             "token_uri": "https://oauth2.googleapis.com/token",
             "client_id": os.environ["GOOGLE_CLIENT_ID"],
             "client_secret": os.environ["GOOGLE_CLIENT_SECRET"],
-            "scopes": ["https://www.googleapis.com/auth/presentations", "https://www.googleapis.com/auth/drive"]
+            "scopes": ["https://www.googleapis.com/auth/presentations", "https://www.googleapis.com/auth/drive", "https://www.googleapis.com/auth/userinfo.email"]
         }
+        st.session_state["credentials"] = creds_dict
+        st.session_state["user_email"] = get_user_info(Credentials(**creds_dict))
+
+# 2. 구글 로그인 후 돌아오는 인증 코드(URL 파라미터) 처리
+if st.query_params.get("code") and st.session_state["credentials"] is None:
+    try:
+        flow = create_flow()
+        flow.fetch_token(code=st.query_params["code"])
+        creds = flow.credentials
+        
+        creds_dict = {
+            "token": creds.token, "refresh_token": creds.refresh_token,
+            "token_uri": creds.token_uri, "client_id": creds.client_id,
+            "client_secret": creds.client_secret, "scopes": creds.scopes
+        }
+        st.session_state["credentials"] = creds_dict
+        st.session_state["user_email"] = get_user_info(creds)
+        
+        # 쿠키에 토큰 저장 (브라우저 종료 후에도 유지)
+        cookies["token"], cookies["refresh_token"] = creds.token, creds.refresh_token
+        cookies.save()
+        
+        st.query_params.clear()
+        st.rerun()
+    except Exception as e:
+        st.error(f"로그인 오류 발생: {e}")
 
 # -------------------------------
-# 페이지 이동 헬퍼 함수
+# 헬퍼 함수
 # -------------------------------
+def get_google_credentials():
+    if st.session_state.get("credentials"):
+        return Credentials(**st.session_state["credentials"])
+    return None
+
 def go_to_main():
     st.session_state.update({"page": "main", "editing_song": None})
     st.rerun()
@@ -75,7 +119,7 @@ def delete_confirm_dialog(song_id, title):
         st.rerun()
 
 # -------------------------------
-# 곡 추가 및 수정 페이지 (통합 관리)
+# 곡 추가 및 수정 페이지
 # -------------------------------
 def show_add_edit_page(mode="add"):
     st.title("찬양곡 추가" if mode == "add" else "찬양곡 수정")
@@ -102,7 +146,7 @@ def show_add_edit_page(mode="add"):
             if not title:
                 st.error("곡 이름은 필수입니다")
             else:
-                with st.spinner("저장 중..."):
+                with st.spinner("데이터 저장 중..."):
                     data = {
                         "title": title, "start_key": start_key, "youtube_url": youtube_url,
                         "tags": [t.strip() for t in tags_input.split(",")] if tags_input else [],
@@ -132,22 +176,43 @@ if st.session_state["page"] == "add_song":
 elif st.session_state["page"] == "edit_song":
     show_add_edit_page("edit")
 else:
-    # 사이드바 (장바구니)
+    # 사이드바 (인증 및 콘티 생성)
     with st.sidebar:
         st.header("계정")
-        if st.session_state["credentials"] is not None:
-            st.success("로그인됨")
+        if st.session_state["credentials"] is None:
+            flow = create_flow()
+            auth_url, _ = flow.authorization_url(access_type="offline", prompt="consent")
+            st.markdown(f'<a href="{auth_url}" target="_self" style="text-decoration:none;"><div style="background-color:white; color:#757575; border-radius:4px; border:1px solid #dadce0; padding:10px; text-align:center; font-weight:500;">Google 로그인</div></a>', unsafe_allow_html=True)
+        else:
+            st.success(f"{st.session_state.get('user_email', '로그인됨')}")
             if st.button("로그아웃"):
-                st.session_state.update({"credentials": None})
+                st.session_state.update({"credentials": None, "user_email": None})
+                cookies["token"], cookies["refresh_token"] = "", ""
                 cookies.save(); st.rerun()
 
         st.divider(); st.header("콘티 리스트")
         if st.session_state["cart"]:
+            # 콘티 생성 기능 (복구)
+            filename = st.text_input("파일명", value=f"콘티_{datetime.datetime.now().strftime('%y%m%d')}")
             for idx, item in enumerate(st.session_state["cart"]):
                 st.write(f"{idx+1}. {item['title']}")
+            
+            if st.button("슬라이드 생성", type="primary", use_container_width=True):
+                creds = get_google_credentials()
+                if creds:
+                    with st.spinner("구글 슬라이드 생성 중..."):
+                        url = create_praise_slides(st.session_state["cart"], filename, creds)
+                        if url: st.session_state["slide_url"] = url; st.rerun()
+                else:
+                    st.error("먼저 구글 로그인을 해주세요.")
+
+            if st.session_state.get("slide_url"):
+                st.link_button("생성된 슬라이드 열기", st.session_state["slide_url"], use_container_width=True)
+
             if st.button("전체 초기화"):
-                st.session_state["cart"] = []; st.rerun()
-        else: st.caption("곡을 담아주세요")
+                st.session_state.update({"cart": [], "slide_url": None}); st.rerun()
+        else:
+            st.caption("곡을 담아주세요")
 
     # 메인 목록
     t1, t2 = st.columns([5,1])
@@ -164,7 +229,6 @@ else:
         s = doc.to_dict(); s["id"] = doc.id
         if not query or query in s.get("title","").lower() or any(query in t.lower() for t in s.get("tags", [])):
             with st.container(border=True):
-                # 제목, 수정, 삭제 버튼 배치
                 h1, h2, h3 = st.columns([8, 1, 1])
                 h1.markdown(f"### {s['title']} ({s.get('start_key','')})")
                 if h2.button("수정", key=f"edit_{s['id']}", use_container_width=True):
@@ -175,7 +239,6 @@ else:
                 if s.get("tags"):
                     st.markdown(" ".join([f"`#{t}`" for t in s.get("tags", [])]))
                 
-                # 링크 버튼
                 l1, l2, l3 = st.columns(3)
                 if s.get("youtube_url"): l1.markdown(f'<a href="{s["youtube_url"]}" target="_blank" style="{btn_style}">YouTube</a>', unsafe_allow_html=True)
                 if s.get("image_url"): l2.markdown(f'<a href="{s["image_url"]}" target="_blank" style="{btn_style}">악보 이미지</a>', unsafe_allow_html=True)
