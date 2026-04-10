@@ -88,6 +88,22 @@ if st.query_params.get("code") and st.session_state["credentials"] is None:
     except Exception as e: st.error(f"로그인 오류: {e}")
 
 # -------------------------------
+# 콘티 저장 로직 (Firebase)
+# -------------------------------
+def save_playlist_to_firebase(filename, cart_items, file_url):
+    try:
+        playlist_data = {
+            "title": filename,
+            "items": [{"id": item["id"], "title": item["title"]} for item in cart_items],
+            "file_url": file_url,
+            "user_email": st.session_state.get("user_email"),
+            "created_at": datetime.datetime.now()
+        }
+        db.collection("playlists").add(playlist_data)
+    except Exception as e:
+        st.error(f"콘티 저장 실패: {e}")
+
+# -------------------------------
 # 가사 PPT 생성 및 업로드
 # -------------------------------
 def merge_and_upload_ppt(cart_items, filename):
@@ -172,7 +188,12 @@ def merge_and_upload_ppt(cart_items, filename):
                 fields='id, webViewLink'
             ).execute()
 
-            st.session_state["ppt_slide_url"] = file.get("webViewLink")
+            view_link = file.get('webViewLink')
+            st.session_state["ppt_slide_url"] = view_link
+            
+            # Firebase에 콘티 정보 저장
+            save_playlist_to_firebase(filename, cart_items, view_link)
+            
             st.success("가사 PPT 업로드 완료")
             st.rerun()
 
@@ -312,9 +333,25 @@ else:
         st.divider(); st.header("콘티 리스트")
         if st.session_state["cart"]:
             fname = st.text_input("파일명", value=f"콘티_{datetime.datetime.now().strftime('%y%m%d')}")
-            for idx, item in enumerate(st.session_state["cart"]):
-                st.write(f"{idx+1}. {item['title']}")
             
+            # [기능 1] 리스트 내 순서 변경 및 삭제 버튼
+            for idx, item in enumerate(st.session_state["cart"]):
+                with st.container(border=True):
+                    c1, c2, c3, c4 = st.columns([5, 1, 1, 1])
+                    c1.write(f"**{idx+1}. {item['title']}**")
+                    if c2.button("▲", key=f"up_{idx}"):
+                        if idx > 0:
+                            st.session_state["cart"][idx], st.session_state["cart"][idx-1] = st.session_state["cart"][idx-1], st.session_state["cart"][idx]
+                            st.rerun()
+                    if c3.button("▼", key=f"down_{idx}"):
+                        if idx < len(st.session_state["cart"]) - 1:
+                            st.session_state["cart"][idx], st.session_state["cart"][idx+1] = st.session_state["cart"][idx+1], st.session_state["cart"][idx]
+                            st.rerun()
+                    if c4.button("X", key=f"cart_del_{idx}"):
+                        st.session_state["cart"].pop(idx)
+                        st.rerun()
+            
+            st.divider()
             st.subheader("슬라이드 생성")
             if st.button("슬라이드 생성", type="primary", use_container_width=True):
                 if st.session_state["credentials"]:
@@ -323,27 +360,24 @@ else:
                         url = create_praise_slides(st.session_state["cart"], fname, creds)
                         if url: 
                             st.session_state["slide_url"] = url
+                            save_playlist_to_firebase(fname, st.session_state["cart"], url)
                             st.rerun()
                     except Exception as e:
                         if "invalid_scope" in str(e) or "RefreshError" in str(e):
                             st.error("인증 세션이 만료되었거나 권한 설정이 변경되었습니다. 로그아웃 후 다시 로그인해주세요.")
-                        else:
-                            st.error(f"슬라이드 생성 오류: {e}")
-                else:
-                    st.error("구글 로그인이 필요합니다.")
+                        else: st.error(f"슬라이드 생성 오류: {e}")
+                else: st.error("구글 로그인이 필요합니다.")
 
             if st.session_state.get("slide_url"):
                 st.link_button("슬라이드 파일 열기", st.session_state["slide_url"], use_container_width=True)
                 st.link_button("슬라이드 폴더 열기", TARGET_FOLDER_URL, use_container_width=True)
 
             st.divider()
-
             st.subheader("가사 PPT 생성")
             if st.button("가사 PPT 생성", use_container_width=True):
                 if st.session_state["credentials"]:
                     merge_and_upload_ppt(st.session_state["cart"], fname)
-                else:
-                    st.error("구글 로그인이 필요합니다.")
+                else: st.error("구글 로그인이 필요합니다.")
 
             if st.session_state.get("ppt_slide_url"):
                 st.link_button("PPT 파일 열기", st.session_state["ppt_slide_url"], use_container_width=True)
@@ -352,33 +386,30 @@ else:
             if st.button("전체 초기화"):
                 st.session_state.update({"cart": [], "slide_url": None, "ppt_slide_url": None}); st.rerun()
         else: st.caption("곡을 담아주세요")
+        
+        # [기능 2] 최근 생성된 콘티 히스토리 표시 (Firebase DB 기반)
+        st.divider(); st.header("최근 생성 콘티")
+        history_docs = db.collection("playlists").order_by("created_at", direction="DESCENDING").limit(5).stream()
+        for h_doc in history_docs:
+            h = h_doc.to_dict()
+            with st.expander(f"{h['title']} ({h['created_at'].strftime('%m/%d %H:%M')})"):
+                for s_item in h.get("items", []):
+                    st.write(f"- {s_item['title']}")
+                st.link_button("파일 열기", h["file_url"], use_container_width=True)
 
     t1, t2 = st.columns([5,1])
     t1.title("Praise Maker")
     if t2.button("찬양곡 추가", type="primary", use_container_width=True):
         st.session_state["page"] = "add_song"; st.rerun()
 
-    query = st.text_input(
-        "검색", 
-        placeholder="🔍 제목, 태그 또는 Key(C, D, G# 등)로 검색", 
-        label_visibility="collapsed"
-    ).strip().lower()
-    
+    query = st.text_input("검색", placeholder="🔍 제목, 태그 또는 Key로 검색", label_visibility="collapsed").strip().lower()
     docs = db.collection("songs").order_by("created_at", direction="DESCENDING").limit(50).stream()
 
     btn_style = "display:flex; align-items:center; justify-content:center; background-color:#F0F2F6; color:#262730; padding:5px 10px; border-radius:5px; text-decoration:none; font-size:13px; border:1px solid #E6E9EF; gap:5px;"
 
     for doc in docs:
         s = doc.to_dict(); s["id"] = doc.id
-        
-        match = (
-            not query or 
-            query in s.get("title","").lower() or 
-            any(query in t.lower() for t in s.get("tags", [])) or
-            query == s.get("start_key","").lower() or 
-            query in s.get("start_key","").lower()
-        )
-        
+        match = (not query or query in s.get("title","").lower() or any(query in t.lower() for t in s.get("tags", [])) or query in s.get("start_key","").lower())
         if match:
             with st.container(border=True):
                 h1, h2, h3 = st.columns([8, 1, 1])
@@ -387,19 +418,13 @@ else:
                     st.session_state.update({"editing_song": s, "page": "edit_song"}); st.rerun()
                 if h3.button("삭제", key=f"del_{s['id']}", use_container_width=True):
                     delete_confirm_dialog(s['id'], s['title'])
-                
                 if s.get("tags"):
                     st.markdown(" ".join([f"`#{t}`" for t in s.get("tags", [])]))
-                
                 l1, l2, l3 = st.columns(3)
                 if s.get("youtube_url"):
-                    youtube_icon_url = "https://upload.wikimedia.org/wikipedia/commons/e/ef/Youtube_logo.png"
-                    l1.markdown(f'<a href="{s["youtube_url"]}" target="_blank" style="{btn_style}"><img src="{youtube_icon_url}" width="18" height="13">YouTube</a>', unsafe_allow_html=True)
-                if s.get("image_url"):
-                    l2.markdown(f'<a href="{s["image_url"]}" target="_blank" style="{btn_style}">악보 이미지</a>', unsafe_allow_html=True)
-                if s.get("ppt_url"):
-                    l3.markdown(f'<a href="{s["ppt_url"]}" target="_blank" style="{btn_style}">가사 PPT</a>', unsafe_allow_html=True)
-
+                    l1.markdown(f'<a href="{s["youtube_url"]}" target="_blank" style="{btn_style}"><img src="https://upload.wikimedia.org/wikipedia/commons/e/ef/Youtube_logo.png" width="18" height="13">YouTube</a>', unsafe_allow_html=True)
+                if s.get("image_url"): l2.markdown(f'<a href="{s["image_url"]}" target="_blank" style="{btn_style}">악보 이미지</a>', unsafe_allow_html=True)
+                if s.get("ppt_url"): l3.markdown(f'<a href="{s["ppt_url"]}" target="_blank" style="{btn_style}">가사 PPT</a>', unsafe_allow_html=True)
                 if st.button("리스트에 담기", key=f"add_{s['id']}", use_container_width=True, type="primary"):
                     if not any(i["id"] == s["id"] for i in st.session_state["cart"]):
                         st.session_state["cart"].append(s); st.rerun()
