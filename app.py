@@ -318,11 +318,17 @@ else:
             st.subheader("슬라이드 생성")
             if st.button("슬라이드 생성", type="primary", use_container_width=True):
                 if st.session_state["credentials"]:
-                    creds = Credentials(**st.session_state["credentials"])
-                    url = create_praise_slides(st.session_state["cart"], fname, creds)
-                    if url: 
-                        st.session_state["slide_url"] = url
-                        st.rerun()
+                    try:
+                        creds = Credentials(**st.session_state["credentials"])
+                        url = create_praise_slides(st.session_state["cart"], fname, creds)
+                        if url: 
+                            st.session_state["slide_url"] = url
+                            st.rerun()
+                    except Exception as e:
+                        if "invalid_scope" in str(e) or "RefreshError" in str(e):
+                            st.error("인증 세션이 만료되었거나 권한 설정이 변경되었습니다. 로그아웃 후 다시 로그인해주세요.")
+                        else:
+                            st.error(f"슬라이드 생성 오류: {e}")
                 else:
                     st.error("구글 로그인이 필요합니다.")
 
@@ -352,7 +358,6 @@ else:
     if t2.button("찬양곡 추가", type="primary", use_container_width=True):
         st.session_state["page"] = "add_song"; st.rerun()
 
-    # 검색창 수정 (아이콘 추가 및 placeholder 변경)
     query = st.text_input(
         "검색", 
         placeholder="🔍 제목, 태그 또는 Key(C, D, G# 등)로 검색", 
@@ -366,13 +371,12 @@ else:
     for doc in docs:
         s = doc.to_dict(); s["id"] = doc.id
         
-        # 검색 로직 수정: 제목, 태그 외에 start_key(코드)도 포함
         match = (
             not query or 
             query in s.get("title","").lower() or 
             any(query in t.lower() for t in s.get("tags", [])) or
-            query == s.get("start_key","").lower() or # 정확한 매칭
-            query in s.get("start_key","").lower()    # 부분 매칭
+            query == s.get("start_key","").lower() or 
+            query in s.get("start_key","").lower()
         )
         
         if match:
