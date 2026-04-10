@@ -245,7 +245,6 @@ def show_add_edit_page(mode="add"):
         ppt_file = c4.file_uploader("가사 PPT" + (" *" if mode=="add" else ""), type=["ppt","pptx"], key="ppt_up")
 
         if st.form_submit_button("저장하기", type="primary", use_container_width=True):
-            # Validation: 신규 등록 시 필수 체크 / 수정 시에는 기존 URL 존재 여부 확인
             img_ready = image_file or (mode == "edit" and song.get("image_url"))
             ppt_ready = ppt_file or (mode == "edit" and song.get("ppt_url"))
 
@@ -262,7 +261,6 @@ def show_add_edit_page(mode="add"):
                             "ppt_url": song.get("ppt_url", "")
                         }
                         
-                        # 신규 이미지 업로드
                         if image_file:
                             safe_img_name = "".join([c for c in image_file.name if c.isalnum() or c in "._- "]).strip()
                             blob = bucket.blob(f"songs/images/{datetime.datetime.now().strftime('%H%M%S')}_{safe_img_name}")
@@ -270,7 +268,6 @@ def show_add_edit_page(mode="add"):
                             blob.make_public()
                             data["image_url"] = blob.public_url
 
-                        # 신규 PPT 업로드
                         if ppt_file:
                             safe_ppt_name = "".join([c for c in ppt_file.name if c.isalnum() or c in "._- "]).strip()
                             blob = bucket.blob(f"songs/ppts/{datetime.datetime.now().strftime('%H%M%S')}_{safe_ppt_name}")
@@ -355,14 +352,29 @@ else:
     if t2.button("찬양곡 추가", type="primary", use_container_width=True):
         st.session_state["page"] = "add_song"; st.rerun()
 
-    query = st.text_input("검색", placeholder="제목 또는 태그 검색", label_visibility="collapsed").strip().lower()
+    # 검색창 수정 (아이콘 추가 및 placeholder 변경)
+    query = st.text_input(
+        "검색", 
+        placeholder="🔍 제목, 태그 또는 Key(C, D, G# 등)로 검색", 
+        label_visibility="collapsed"
+    ).strip().lower()
+    
     docs = db.collection("songs").order_by("created_at", direction="DESCENDING").limit(50).stream()
 
     btn_style = "display:flex; align-items:center; justify-content:center; background-color:#F0F2F6; color:#262730; padding:5px 10px; border-radius:5px; text-decoration:none; font-size:13px; border:1px solid #E6E9EF; gap:5px;"
 
     for doc in docs:
         s = doc.to_dict(); s["id"] = doc.id
-        match = not query or query in s.get("title","").lower() or any(query in t.lower() for t in s.get("tags", []))
+        
+        # 검색 로직 수정: 제목, 태그 외에 start_key(코드)도 포함
+        match = (
+            not query or 
+            query in s.get("title","").lower() or 
+            any(query in t.lower() for t in s.get("tags", [])) or
+            query == s.get("start_key","").lower() or # 정확한 매칭
+            query in s.get("start_key","").lower()    # 부분 매칭
+        )
+        
         if match:
             with st.container(border=True):
                 h1, h2, h3 = st.columns([8, 1, 1])
