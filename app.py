@@ -88,7 +88,7 @@ if st.query_params.get("code") and st.session_state["credentials"] is None:
     except Exception as e: st.error(f"로그인 오류: {e}")
 
 # -------------------------------
-# 가사 PPT 생성 및 업로드 (수정됨)
+# 가사 PPT 생성 및 업로드
 # -------------------------------
 def merge_and_upload_ppt(cart_items, filename):
     creds = Credentials(**st.session_state["credentials"])
@@ -136,8 +136,6 @@ def merge_and_upload_ppt(cart_items, filename):
                 return
 
             merged_prs = Presentation()
-
-           # 16:9 비율 (명확한 단위 표현)
             merged_prs.slide_width = Inches(13.333)
             merged_prs.slide_height = Inches(7.5)
 
@@ -148,7 +146,6 @@ def merge_and_upload_ppt(cart_items, filename):
                     new_slide = merged_prs.slides.add_slide(merged_prs.slide_layouts[6])
 
                     for shape in slide.shapes:
-                        # 이미지만 가져오기 (텍스트 상자 제외)
                         if shape.shape_type == 13:
                             new_slide.shapes.add_picture(
                                 io.BytesIO(shape.image.blob), 
@@ -212,43 +209,48 @@ def show_add_edit_page(mode="add"):
         col1, col2 = st.columns([2, 1])
         title = col1.text_input("곡 이름 *", value=song.get("title", ""))
 
-        # Key 선택 박스와 #/b 체크박스를 한 줄에 배치
         with col2:
             st.write("Key")
             k_col1, k_col2, k_col3 = st.columns([2, 1, 1])
+            
+            s_key = song.get("start_key", "C")
+            base_val = s_key[0] if s_key else "C"
+            sharp_val = "#" in s_key
+            flat_val = "b" in s_key
+
             base_key = k_col1.selectbox(
-                "Key",
-                ["C","D","E","F","G","A","B"],
-                index=0,
+                "Key", ["C","D","E","F","G","A","B"],
+                index=["C","D","E","F","G","A","B"].index(base_val),
                 label_visibility="collapsed"
             )
-            is_sharp = k_col2.checkbox("#")
-            is_flat = k_col3.checkbox("b")
+            is_sharp = k_col2.checkbox("#", value=sharp_val)
+            is_flat = k_col3.checkbox("b", value=flat_val)
 
         if is_sharp and is_flat:
             st.warning("# 또는 b 중 하나만 선택하세요")
             start_key = base_key
         else:
-            if is_sharp:
-                start_key = base_key + "#"
-            elif is_flat:
-                start_key = base_key + "b"
-            else:
-                start_key = base_key
+            start_key = base_key + ("#" if is_sharp else "b" if is_flat else "")
         
         youtube_url = st.text_input("YouTube 링크", value=song.get("youtube_url", ""))
         tags_input = st.text_input("태그 (쉼표 구분)", value=", ".join(song.get("tags", [])) if song.get("tags") else "")
         
         st.write("---")
         st.subheader("파일 업로드")
+        if mode == "edit":
+            st.info("새 파일을 선택하지 않으면 기존 파일이 유지됩니다.")
+        
         c3, c4 = st.columns(2)
-        # AxiosError 400 방지를 위해 file_uploader의 key 값 명시 및 데이터 폼 분리 고려
-        image_file = c3.file_uploader("악보 이미지 *", type=["jpg","png","jpeg"], key="img_up")
-        ppt_file = c4.file_uploader("가사 PPT *", type=["ppt","pptx"], key="ppt_up")
+        image_file = c3.file_uploader("악보 이미지" + (" *" if mode=="add" else ""), type=["jpg","png","jpeg"], key="img_up")
+        ppt_file = c4.file_uploader("가사 PPT" + (" *" if mode=="add" else ""), type=["ppt","pptx"], key="ppt_up")
 
         if st.form_submit_button("저장하기", type="primary", use_container_width=True):
-            if not title or not image_file or not ppt_file:
-                st.error("곡 이름, 악보 이미지, 가사 PPT는 필수입니다")
+            # Validation: 신규 등록 시 필수 체크 / 수정 시에는 기존 URL 존재 여부 확인
+            img_ready = image_file or (mode == "edit" and song.get("image_url"))
+            ppt_ready = ppt_file or (mode == "edit" and song.get("ppt_url"))
+
+            if not title or not img_ready or not ppt_ready:
+                st.error("곡 이름과 필수 파일(이미지, PPT)을 확인해주세요.")
             else:
                 with st.spinner("데이터 저장 중..."):
                     try:
@@ -256,21 +258,30 @@ def show_add_edit_page(mode="add"):
                             "title": title, "start_key": start_key, "youtube_url": youtube_url,
                             "tags": [t.strip() for t in tags_input.split(",")] if tags_input else [],
                             "created_at": song.get("created_at", datetime.datetime.now()),
-                            "image_url": song.get("image_url", ""), "ppt_url": song.get("ppt_url", "")
+                            "image_url": song.get("image_url", ""), 
+                            "ppt_url": song.get("ppt_url", "")
                         }
-                        # 파일 이름에서 특수문자 제거하여 에러 방지
-                        safe_img_name = "".join([c for c in image_file.name if c.isalnum() or c in "._- "]).strip()
-                        blob = bucket.blob(f"songs/images/{datetime.datetime.now().strftime('%H%M%S')}_{safe_img_name}")
-                        blob.upload_from_file(image_file, content_type=image_file.type)
-                        blob.make_public(); data["image_url"] = blob.public_url
+                        
+                        # 신규 이미지 업로드
+                        if image_file:
+                            safe_img_name = "".join([c for c in image_file.name if c.isalnum() or c in "._- "]).strip()
+                            blob = bucket.blob(f"songs/images/{datetime.datetime.now().strftime('%H%M%S')}_{safe_img_name}")
+                            blob.upload_from_file(image_file, content_type=image_file.type)
+                            blob.make_public()
+                            data["image_url"] = blob.public_url
 
-                        safe_ppt_name = "".join([c for c in ppt_file.name if c.isalnum() or c in "._- "]).strip()
-                        blob = bucket.blob(f"songs/ppts/{datetime.datetime.now().strftime('%H%M%S')}_{safe_ppt_name}")
-                        blob.upload_from_file(ppt_file, content_type=ppt_file.type)
-                        blob.make_public(); data["ppt_url"] = blob.public_url
+                        # 신규 PPT 업로드
+                        if ppt_file:
+                            safe_ppt_name = "".join([c for c in ppt_file.name if c.isalnum() or c in "._- "]).strip()
+                            blob = bucket.blob(f"songs/ppts/{datetime.datetime.now().strftime('%H%M%S')}_{safe_ppt_name}")
+                            blob.upload_from_file(ppt_file, content_type=ppt_file.type)
+                            blob.make_public()
+                            data["ppt_url"] = blob.public_url
 
-                        if mode == "add": db.collection("songs").add(data)
-                        else: db.collection("songs").document(song["id"]).update(data)
+                        if mode == "add": 
+                            db.collection("songs").add(data)
+                        else: 
+                            db.collection("songs").document(song["id"]).update(data)
                         
                         st.success("저장 완료")
                         st.session_state.update({"page": "main", "editing_song": None})
