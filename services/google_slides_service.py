@@ -121,13 +121,12 @@ def create_praise_slides(
         })
 
         # -------------------------------
-        # 첫 슬라이드 중앙 제목 표시
+        # 첫 슬라이드 상단 중앙 제목 표시
         # -------------------------------
         if i == 0 and show_title_text:
 
             title_box_id = f"title_box_{datetime.datetime.now().microsecond}"
 
-            # 제목 텍스트 박스 생성
             requests.append({
                 "createShape": {
                     "objectId": title_box_id,
@@ -136,7 +135,7 @@ def create_praise_slides(
                         "pageObjectId": page_id,
                         "size": {
                             "width": {
-                                "magnitude": 300,
+                                "magnitude": 400,
                                 "unit": "PT"
                             },
                             "height": {
@@ -147,16 +146,15 @@ def create_praise_slides(
                         "transform": {
                             "scaleX": 1,
                             "scaleY": 1,
-                            # 슬라이드 중앙
-                            "translateX": 210,
-                            "translateY": 188,
+                            # 슬라이드 상단 중앙
+                            "translateX": 160,
+                            "translateY": 5,
                             "unit": "PT"
                         }
                     }
                 }
             })
 
-            # 제목 텍스트 입력
             requests.append({
                 "insertText": {
                     "objectId": title_box_id,
@@ -164,7 +162,6 @@ def create_praise_slides(
                 }
             })
 
-            # 제목 스타일
             requests.append({
                 "updateTextStyle": {
                     "objectId": title_box_id,
@@ -182,7 +179,6 @@ def create_praise_slides(
                 }
             })
 
-            # 가운데 정렬
             requests.append({
                 "updateParagraphStyle": {
                     "objectId": title_box_id,
@@ -250,7 +246,7 @@ def create_praise_slides(
                             "scaleX": 1,
                             "scaleY": 1,
                             "translateX": 10,
-                            "translateY": 45,
+                            "translateY": 25,
                             "unit": "PT"
                         }
                     }
@@ -340,7 +336,7 @@ def create_praise_slides(
                             "scaleX": 1,
                             "scaleY": 1,
                             "translateX": 370,
-                            "translateY": 45,
+                            "translateY": 25,
                             "unit": "PT"
                         }
                     }
