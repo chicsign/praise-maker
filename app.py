@@ -292,7 +292,7 @@ else:
             if st.session_state.get("slide_url"):
                 st.link_button("악보 열기", st.session_state["slide_url"], use_container_width=True)
                 st.link_button("악보 폴더", SHEET_FOLDER_URL, use_container_width=True)
-
+            st.divider();
             if st.button("가사 PPT 생성", use_container_width=True):
                 if validate_and_refresh_credentials(): merge_and_upload_ppt(st.session_state["cart"], fname)
             
@@ -328,7 +328,6 @@ else:
                 if st.button("기록 삭제", key=f"hist_del_{h_id}", use_container_width=True):
                     delete_history_dialog(h_id, h['title'])
                 for s in h.get("items", []): st.write(f"- {s['title']}")
-                st.link_button("파일 열기", h["file_url"], use_container_width=True)
 
     t1, t2 = st.columns([5,1])
     t1.title("Praise Maker")
