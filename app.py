@@ -34,8 +34,8 @@ st.set_page_config(
 # -------------------------------
 # [시스템 설정] 폴더 ID 및 URL
 # -------------------------------
-SHEET_FOLDER_ID = os.environ.get("SHEET_FOLDER_ID", "1Lr_0MmneLOKNyKhW6TMl6V3L88TlBn5P")
-LYRICS_FOLDER_ID = os.environ.get("LYRICS_FOLDER_ID", "1Lr_0MmneLOKNyKhW6TMl6V3L88TlBn5P")
+SHEET_FOLDER_ID = os.environ.get("SHEET_FOLDER_ID", "FOLDER_ID")
+LYRICS_FOLDER_ID = os.environ.get("LYRICS_FOLDER_ID", "FOLDER_ID")
 
 SHEET_FOLDER_URL = f"https://drive.google.com/drive/folders/{SHEET_FOLDER_ID}"
 LYRICS_FOLDER_URL = f"https://drive.google.com/drive/folders/{LYRICS_FOLDER_ID}"
@@ -118,7 +118,6 @@ def get_user_info(creds):
         return user_info.get("email")
     except: return None
 
-# 쿠키 기반 복구
 if st.session_state["credentials"] is None:
     token, refresh = cookies.get("token"), cookies.get("refresh_token")
     if token and refresh and token != "":
@@ -131,18 +130,6 @@ if st.session_state["credentials"] is None:
         if validate_and_refresh_credentials():
             st.session_state["user_email"] = get_user_info(Credentials(**st.session_state["credentials"]))
         else: st.rerun()
-
-# OAuth 콜백 처리
-if st.query_params.get("code") and st.session_state["credentials"] is None:
-    try:
-        flow = create_flow()
-        flow.fetch_token(code=st.query_params["code"])
-        creds = flow.credentials
-        st.session_state["credentials"] = {"token": creds.token, "refresh_token": creds.refresh_token, "token_uri": creds.token_uri, "client_id": creds.client_id, "client_secret": creds.client_secret, "scopes": creds.scopes}
-        st.session_state["user_email"] = get_user_info(creds)
-        cookies["token"], cookies["refresh_token"] = creds.token, creds.refresh_token
-        cookies.save(); st.query_params.clear(); st.rerun()
-    except Exception as e: st.error(f"로그인 오류: {e}")
 
 # -------------------------------
 # 생성 및 저장 로직
@@ -177,7 +164,6 @@ def merge_and_upload_ppt(cart_items, filename):
 
             merged_prs = Presentation()
             merged_prs.slide_width, merged_prs.slide_height = Inches(13.333), Inches(7.5)
-            # 초기 빈 슬라이드 제거
             xml_slides = merged_prs.slides._sldIdLst
             if len(xml_slides) > 0: del xml_slides[0]
 
@@ -203,10 +189,11 @@ def merge_and_upload_ppt(cart_items, filename):
             save_playlist_to_firebase(filename, cart_items, st.session_state["ppt_slide_url"])
             st.success("가사 PPT 업로드 완료"); st.rerun()
         except Exception as e: st.error(f"오류: {e}")
-        finally: shutil.rmtree(temp_dir, ignore_errors=True)
+        finally:
+            shutil.rmtree(temp_dir, ignore_errors=True)
 
 # -------------------------------
-# 곡 추가/수정/메인 UI 로직
+# 곡 추가/수정 페이지
 # -------------------------------
 def show_add_edit_page(mode="add"):
     st.title("찬양곡 추가" if mode == "add" else "찬양곡 수정")
@@ -278,20 +265,25 @@ else:
             if st.button("악보 PPT 생성", type="primary", use_container_width=True):
                 if validate_and_refresh_credentials():
                     url = create_praise_slides(st.session_state["cart"], fname, Credentials(**st.session_state["credentials"]), SHEET_FOLDER_ID)
-                    if url: st.session_state["slide_url"] = url; save_playlist_to_firebase(fname, st.session_state["cart"], url); st.rerun()
+                    if url: 
+                        st.session_state["slide_url"] = url
+                        save_playlist_to_firebase(fname, st.session_state["cart"], url)
+                        st.rerun()
+            
             if st.session_state.get("slide_url"):
                 st.link_button("악보 열기", st.session_state["slide_url"], use_container_width=True)
                 st.link_button("악보 폴더", SHEET_FOLDER_URL, use_container_width=True)
 
+            # 가사 PPT 생성 섹션
             if st.button("가사 PPT 생성", use_container_width=True):
                 if validate_and_refresh_credentials(): merge_and_upload_ppt(st.session_state["cart"], fname)
+            
             if st.session_state.get("ppt_slide_url"):
-                st.link_button("가사 PPT 열기", st.session_state["ppt_slide_url"], use_container_width=True)
+                st.link_button("가사 열기", st.session_state["ppt_slide_url"], use_container_width=True)
                 st.link_button("가사 폴더", LYRICS_FOLDER_URL, use_container_width=True)
 
             if st.button("전체 초기화"):
                 st.session_state.update({"cart": [], "slide_url": None, "ppt_slide_url": None}); st.rerun()
-
         else: st.caption("곡을 담아주세요")
 
         st.divider(); st.header("최근 생성 콘티")
@@ -299,12 +291,17 @@ else:
         for h_doc in history:
             h, h_id = h_doc.to_dict(), h_doc.id
             with st.expander(f"{h['title']} ({h['created_at'].strftime('%m/%d %H:%M')})"):
-                if st.button("🗑️ 삭제", key=f"hist_del_{h_id}", use_container_width=True):
+                if st.button("기록 삭제", key=f"hist_del_{h_id}", use_container_width=True):
                     delete_history_dialog(h_id, h['title'])
                 for s in h.get("items", []): st.write(f"- {s['title']}")
                 st.link_button("파일 열기", h["file_url"], use_container_width=True)
 
-    st.title("Praise Maker 🎵")
+    # 메인 영역
+    t1, t2 = st.columns([5,1])
+    t1.title("Praise Maker 🎵")
+    if t2.button("찬양곡 추가", type="primary", use_container_width=True):
+        st.session_state["page"] = "add_song"; st.rerun()
+        
     q = st.text_input("검색", placeholder="🔍 제목, 태그, Key 검색", label_visibility="collapsed").strip().lower()
     
     docs = db.collection("songs").order_by("created_at", direction="DESCENDING").limit(50).stream()
@@ -317,6 +314,9 @@ else:
                 if h2.button("수정", key=f"edit_{s['id']}"):
                     st.session_state.update({"editing_song": s, "page": "edit_song"}); st.rerun()
                 if h3.button("삭제", key=f"del_{s['id']}"): delete_confirm_dialog(s['id'], s['title'])
+                
+                if s.get("tags"):
+                    st.markdown(" ".join([f"`#{tag}`" for tag in s["tags"]]))
                 
                 if st.button("콘티 리스트에 담기", key=f"add_{s['id']}", use_container_width=True, type="primary"):
                     if s['id'] not in [item['id'] for item in st.session_state["cart"]]:
