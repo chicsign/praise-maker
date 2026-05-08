@@ -299,8 +299,29 @@ else:
         for h_doc in history:
             h, h_id = h_doc.to_dict(), h_doc.id
             with st.expander(f"{h['title']} ({h['created_at'].strftime('%m/%d %H:%M')})"):
+                # [수정 사항] 콘티 리스트에 담기 기능 복구
+                if st.button("콘티 리스트에 담기", key=f"hist_load_{h_id}", use_container_width=True, type="primary"):
+                    missing_songs = []
+                    new_items = []
+                    for s_item in h.get("items", []):
+                        song_ref = db.collection("songs").document(s_item["id"]).get()
+                        if song_ref.exists:
+                            song_data = song_ref.to_dict()
+                            song_data["id"] = s_item["id"]
+                            if not any(i["id"] == song_data["id"] for i in st.session_state["cart"]):
+                                new_items.append(song_data)
+                        else:
+                            missing_songs.append(s_item["title"])
+                    
+                    st.session_state["cart"].extend(new_items)
+                    if missing_songs:
+                        st.warning(f"DB에서 삭제된 곡 제외: {', '.join(missing_songs)}")
+                    st.success(f"{len(new_items)}곡이 추가되었습니다.")
+                    st.rerun()
+
                 if st.button("기록 삭제", key=f"hist_del_{h_id}", use_container_width=True):
                     delete_history_dialog(h_id, h['title'])
+                
                 for s in h.get("items", []): st.write(f"- {s['title']}")
                 st.link_button("파일 열기", h["file_url"], use_container_width=True)
 
@@ -314,7 +335,7 @@ else:
     docs = db.collection("songs").order_by("created_at", direction="DESCENDING").limit(50).stream()
     for doc in docs:
         s = doc.to_dict() | {"id": doc.id}
-        if not q or q in s['title'].lower() or any(q in t.lower() for t in s.get('tags', [])):
+        if not q or q in s['title'].lower() or any(q in t.lower() for t in s.get('tags', [])) or q in s.get('start_key', '').lower():
             with st.container(border=True):
                 h1, h2, h3 = st.columns([8,1,1])
                 h1.markdown(f"### {s['title']} ({s.get('start_key','C')})")
