@@ -645,7 +645,8 @@ else:
                         url = create_praise_slides(
                             st.session_state["cart"],
                             fname,
-                            creds
+                            creds,
+                            show_title_text=True
                         )
 
                         if url:
