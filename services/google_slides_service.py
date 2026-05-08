@@ -53,7 +53,12 @@ def get_credentials():
         scopes=creds_data["scopes"]
     )
 
-def create_praise_slides(cart_items, file_name, creds):
+def create_praise_slides(
+    cart_items,
+    file_name,
+    creds,
+    show_title_text=True
+):
     creds = get_credentials()
 
     if not creds:
@@ -116,12 +121,13 @@ def create_praise_slides(cart_items, file_name, creds):
         })
 
         # -------------------------------
-        # 첫 슬라이드 상단 파일명 표시
+        # 첫 슬라이드 중앙 제목 표시
         # -------------------------------
-        if i == 0:
+        if i == 0 and show_title_text:
 
             title_box_id = f"title_box_{datetime.datetime.now().microsecond}"
 
+            # 제목 텍스트 박스 생성
             requests.append({
                 "createShape": {
                     "objectId": title_box_id,
@@ -130,25 +136,27 @@ def create_praise_slides(cart_items, file_name, creds):
                         "pageObjectId": page_id,
                         "size": {
                             "width": {
-                                "magnitude": 500,
+                                "magnitude": 300,
                                 "unit": "PT"
                             },
                             "height": {
-                                "magnitude": 40,
+                                "magnitude": 30,
                                 "unit": "PT"
                             }
                         },
                         "transform": {
                             "scaleX": 1,
                             "scaleY": 1,
-                            "translateX": 20,
-                            "translateY": 10,
+                            # 슬라이드 중앙
+                            "translateX": 210,
+                            "translateY": 188,
                             "unit": "PT"
                         }
                     }
                 }
             })
 
+            # 제목 텍스트 입력
             requests.append({
                 "insertText": {
                     "objectId": title_box_id,
@@ -156,12 +164,13 @@ def create_praise_slides(cart_items, file_name, creds):
                 }
             })
 
+            # 제목 스타일
             requests.append({
                 "updateTextStyle": {
                     "objectId": title_box_id,
                     "style": {
                         "fontSize": {
-                            "magnitude": 20,
+                            "magnitude": 10,
                             "unit": "PT"
                         },
                         "bold": True
@@ -170,6 +179,20 @@ def create_praise_slides(cart_items, file_name, creds):
                         "type": "ALL"
                     },
                     "fields": "fontSize,bold"
+                }
+            })
+
+            # 가운데 정렬
+            requests.append({
+                "updateParagraphStyle": {
+                    "objectId": title_box_id,
+                    "style": {
+                        "alignment": "CENTER"
+                    },
+                    "textRange": {
+                        "type": "ALL"
+                    },
+                    "fields": "alignment"
                 }
             })
 
