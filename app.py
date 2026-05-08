@@ -395,6 +395,21 @@ def delete_confirm_dialog(song_id, title):
         use_container_width=True
     ):
         st.rerun()
+                finally:
+            shutil.rmtree(temp_dir, ignore_errors=True)
+
+# -------------------------------
+# 콘티 기록 삭제 확인 다이얼로그
+# -------------------------------
+@st.dialog("기록 삭제 확인")
+def delete_history_dialog(doc_id, title):
+    st.write(f"'{title}' 콘티 기록을 삭제하시겠습니까?")
+    st.caption("※ 저장된 콘티 기록만 삭제하며, 구글 드라이브 파일은 삭제되지 않습니다.")
+    c1, c2 = st.columns(2)
+    if c1.button("콘티 삭제", type="primary", use_container_width=True):
+        db.collection("playlists").document(doc_id).delete()
+        st.rerun()
+    if c2.button("취소", use_container_width=True): st.rerun()
 
 # -------------------------------
 # 곡 추가 및 수정 페이지
@@ -850,29 +865,30 @@ else:
 
         st.header("최근 생성 콘티")
 
-        history_docs = (
-            db.collection("playlists")
-            .order_by("created_at", direction="DESCENDING")
-            .limit(5)
-            .stream()
-        )
+        history_docs = db.collection("playlists").order_by("created_at", direction="DESCENDING").limit(10).stream()
+            for h_doc in history_docs:
+                h, h_id = h_doc.to_dict(), h_doc.id
+                with st.expander(f"{h['title']} ({h['created_at'].strftime('%m/%d %H:%M')})"):
+                    if st.button("콘티 리스트에 담기", key=f"hist_load_{h_id}", use_container_width=True):
+                        missing_songs = []
+                        new_items = []
+                        for s_item in h.get("items", []):
+                            song_ref = db.collection("songs").document(s_item["id"]).get()
+                            if song_ref.exists:
+                                song_data = song_ref.to_dict(); song_data["id"] = s_item["id"]
+                                if not any(i["id"] == song_data["id"] for i in st.session_state["cart"]):
+                                    new_items.append(song_data)
+                            else: missing_songs.append(s_item["title"])
+                        st.session_state["cart"].extend(new_items)
+                        if missing_songs: st.warning(f"DB에서 삭제된 곡 제외: {', '.join(missing_songs)}")
+                        st.success(f"{len(new_items)}곡이 추가되었습니다.")
+                        st.rerun()
+                    
+                    for s_item in h.get("items", []): st.write(f"- {s_item['title']}")
+                    # 개별 기록 삭제 버튼 (해당 문서 ID를 통해 한 건만 삭제)
+                    if st.button("이 기록 삭제", key=f"hist_del_{h_id}", use_container_width=True, type="secondary"):
+                        delete_history_dialog(h_id, h['title'])
 
-        for h_doc in history_docs:
-
-            h = h_doc.to_dict()
-
-            with st.expander(
-                f"{h['title']} ({h['created_at'].strftime('%m/%d %H:%M')})"
-            ):
-
-                for s_item in h.get("items", []):
-                    st.write(f"- {s_item['title']}")
-
-                st.link_button(
-                    "파일 열기",
-                    h["file_url"],
-                    use_container_width=True
-                )
 
     # -------------------------------
     # 메인 영역
