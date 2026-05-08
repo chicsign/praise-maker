@@ -1,6 +1,7 @@
 import os
 import datetime
 import streamlit as st
+
 from google_auth_oauthlib.flow import Flow
 from googleapiclient.discovery import build
 from google.oauth2.credentials import Credentials
@@ -8,7 +9,10 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-SCOPES = ["https://www.googleapis.com/auth/presentations", "https://www.googleapis.com/auth/drive"]
+SCOPES = [
+    "https://www.googleapis.com/auth/presentations",
+    "https://www.googleapis.com/auth/drive"
+]
 
 CLIENT_CONFIG = {
     "web": {
@@ -20,13 +24,26 @@ CLIENT_CONFIG = {
 }
 
 def create_flow():
-    redirect_uri = os.environ.get("OAUTH_REDIRECT_URI", "http://localhost:8501").strip()
-    return Flow.from_client_config(CLIENT_CONFIG, scopes=SCOPES, redirect_uri=redirect_uri)
+    redirect_uri = os.environ.get(
+        "OAUTH_REDIRECT_URI",
+        "http://localhost:8501"
+    ).strip()
+
+    return Flow.from_client_config(
+        CLIENT_CONFIG,
+        scopes=SCOPES,
+        redirect_uri=redirect_uri
+    )
 
 def get_credentials():
-    if "credentials" not in st.session_state or st.session_state["credentials"] is None:
+    if (
+        "credentials" not in st.session_state or
+        st.session_state["credentials"] is None
+    ):
         return None
+
     creds_data = st.session_state["credentials"]
+
     return Credentials(
         token=creds_data["token"],
         refresh_token=creds_data["refresh_token"],
@@ -38,42 +55,186 @@ def get_credentials():
 
 def create_praise_slides(cart_items, file_name, creds):
     creds = get_credentials()
-    if not creds: return None
-    
-    slides_service = build("slides", "v1", credentials=creds, static_discovery=False)
-    drive_service = build("drive", "v3", credentials=creds, static_discovery=False)
 
-    if not file_name: file_name = f"콘티_{datetime.datetime.now().strftime('%y%m%d')}"
+    if not creds:
+        return None
+    
+    slides_service = build(
+        "slides",
+        "v1",
+        credentials=creds,
+        static_discovery=False
+    )
+
+    drive_service = build(
+        "drive",
+        "v3",
+        credentials=creds,
+        static_discovery=False
+    )
+
+    if not file_name:
+        file_name = f"콘티_{datetime.datetime.now().strftime('%y%m%d')}"
     
     file_metadata = {
         "name": file_name,
         "mimeType": "application/vnd.google-apps.presentation",
-        "parents": [os.environ.get("FOLDER_ID")] if os.environ.get("FOLDER_ID") else []
+        "parents": (
+            [os.environ.get("FOLDER_ID")]
+            if os.environ.get("FOLDER_ID")
+            else []
+        )
     }
-    file = drive_service.files().create(body=file_metadata, fields="id").execute()
+
+    file = drive_service.files().create(
+        body=file_metadata,
+        fields="id"
+    ).execute()
+
     presentation_id = file["id"]
 
     requests = []
+
+    # -------------------------------
     # 2분할 배치 로직
+    # -------------------------------
     for i in range(0, len(cart_items), 2):
         page_id = f"page_{i}_{datetime.datetime.now().microsecond}"
-        requests.append({"createSlide": {"objectId": page_id, "insertionIndex": str(i // 2), 
-                                         "slideLayoutReference": {"predefinedLayout": "BLANK"}}})
-        
-        # 왼쪽 배치
+
+        requests.append({
+            "createSlide": {
+                "objectId": page_id,
+                "insertionIndex": str(i // 2),
+                "slideLayoutReference": {
+                    "predefinedLayout": "BLANK"
+                }
+            }
+        })
+
+        # -------------------------------
+        # 첫 슬라이드 상단 파일명 표시
+        # -------------------------------
+        if i == 0:
+            title_box_id = f"title_box_{datetime.datetime.now().microsecond}"
+
+            requests.append({
+                "createShape": {
+                    "objectId": title_box_id,
+                    "shapeType": "TEXT_BOX",
+                    "elementProperties": {
+                        "pageObjectId": page_id,
+                        "size": {
+                            "width": {
+                                "magnitude": 500,
+                                "unit": "PT"
+                            },
+                            "height": {
+                                "magnitude": 40,
+                                "unit": "PT"
+                            }
+                        },
+                        "transform": {
+                            "scaleX": 1,
+                            "scaleY": 1,
+                            "translateX": 20,
+                            "translateY": 10,
+                            "unit": "PT"
+                        }
+                    }
+                }
+            })
+
+            requests.append({
+                "insertText": {
+                    "objectId": title_box_id,
+                    "text": file_name
+                }
+            })
+
+            requests.append({
+                "updateTextStyle": {
+                    "objectId": title_box_id,
+                    "style": {
+                        "fontSize": {
+                            "magnitude": 20,
+                            "unit": "PT"
+                        },
+                        "bold": True
+                    },
+                    "textRange": {
+                        "type": "ALL"
+                    },
+                    "fields": "fontSize,bold"
+                }
+            })
+
+        # -------------------------------
+        # 왼쪽 이미지
+        # -------------------------------
         if cart_items[i].get("image_url"):
-            requests.append({"createImage": {"url": cart_items[i]["image_url"],
-                "elementProperties": {"pageObjectId": page_id, 
-                "size": {"width": {"magnitude": 360, "unit": "PT"}, "height": {"magnitude": 405, "unit": "PT"}},
-                "transform": {"scaleX": 1, "scaleY": 1, "translateX": 0, "translateY": 0, "unit": "PT"}}}})
+            requests.append({
+                "createImage": {
+                    "url": cart_items[i]["image_url"],
+                    "elementProperties": {
+                        "pageObjectId": page_id,
+                        "size": {
+                            "width": {
+                                "magnitude": 360,
+                                "unit": "PT"
+                            },
+                            "height": {
+                                "magnitude": 405,
+                                "unit": "PT"
+                            }
+                        },
+                        "transform": {
+                            "scaleX": 1,
+                            "scaleY": 1,
+                            "translateX": 0,
+                            "translateY": 0,
+                            "unit": "PT"
+                        }
+                    }
+                }
+            })
         
-        # 오른쪽 배치
-        if i + 1 < len(cart_items) and cart_items[i+1].get("image_url"):
-            requests.append({"createImage": {"url": cart_items[i+1]["image_url"],
-                "elementProperties": {"pageObjectId": page_id, 
-                "size": {"width": {"magnitude": 360, "unit": "PT"}, "height": {"magnitude": 405, "unit": "PT"}},
-                "transform": {"scaleX": 1, "scaleY": 1, "translateX": 360, "translateY": 0, "unit": "PT"}}}})
+        # -------------------------------
+        # 오른쪽 이미지
+        # -------------------------------
+        if (
+            i + 1 < len(cart_items) and
+            cart_items[i + 1].get("image_url")
+        ):
+            requests.append({
+                "createImage": {
+                    "url": cart_items[i + 1]["image_url"],
+                    "elementProperties": {
+                        "pageObjectId": page_id,
+                        "size": {
+                            "width": {
+                                "magnitude": 360,
+                                "unit": "PT"
+                            },
+                            "height": {
+                                "magnitude": 405,
+                                "unit": "PT"
+                            }
+                        },
+                        "transform": {
+                            "scaleX": 1,
+                            "scaleY": 1,
+                            "translateX": 360,
+                            "translateY": 0,
+                            "unit": "PT"
+                        }
+                    }
+                }
+            })
 
     if requests:
-        slides_service.presentations().batchUpdate(presentationId=presentation_id, body={"requests": requests}).execute()
+        slides_service.presentations().batchUpdate(
+            presentationId=presentation_id,
+            body={"requests": requests}
+        ).execute()
+
     return f"https://docs.google.com/presentation/d/{presentation_id}"
