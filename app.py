@@ -64,7 +64,7 @@ for key, default in session_keys.items():
         st.session_state[key] = default
 
 # -------------------------------
-# 다이얼로그 (삭제 확인용)
+# 다이얼로그 및 인증 관련 함수
 # -------------------------------
 @st.dialog("곡 삭제 확인")
 def delete_confirm_dialog(song_id, title):
@@ -85,9 +85,6 @@ def delete_history_dialog(doc_id, title):
         st.rerun()
     if c2.button("취소", use_container_width=True): st.rerun()
 
-# -------------------------------
-# 인증 관련 함수
-# -------------------------------
 def logout():
     st.session_state.update({"credentials": None, "user_email": None, "slide_url": None, "ppt_slide_url": None})
     cookies["token"], cookies["refresh_token"] = "", ""
@@ -118,6 +115,27 @@ def get_user_info(creds):
         return user_info.get("email")
     except: return None
 
+# --- OAuth 콜백 처리  ---
+if st.query_params.get("code") and st.session_state["credentials"] is None:
+    try:
+        flow = create_flow()
+        flow.fetch_token(code=st.query_params["code"])
+        creds = flow.credentials
+        creds_dict = {
+            "token": creds.token, "refresh_token": creds.refresh_token,
+            "token_uri": creds.token_uri, "client_id": creds.client_id,
+            "client_secret": creds.client_secret, "scopes": creds.scopes
+        }
+        st.session_state["credentials"] = creds_dict
+        st.session_state["user_email"] = get_user_info(creds)
+        cookies["token"], cookies["refresh_token"] = creds.token, creds.refresh_token
+        cookies.save()
+        st.query_params.clear()
+        st.rerun()
+    except Exception as e:
+        st.error(f"로그인 처리 중 오류 발생: {e}")
+
+# 쿠키 기반 자동 로그인 복구
 if st.session_state["credentials"] is None:
     token, refresh = cookies.get("token"), cookies.get("refresh_token")
     if token and refresh and token != "":
@@ -132,7 +150,7 @@ if st.session_state["credentials"] is None:
         else: st.rerun()
 
 # -------------------------------
-# 생성 및 저장 로직
+# 생성 및 저장 로직 (이하 기존 코드 유지)
 # -------------------------------
 def save_playlist_to_firebase(filename, cart_items, file_url):
     try:
@@ -192,9 +210,6 @@ def merge_and_upload_ppt(cart_items, filename):
         finally:
             shutil.rmtree(temp_dir, ignore_errors=True)
 
-# -------------------------------
-# 곡 추가/수정 페이지
-# -------------------------------
 def show_add_edit_page(mode="add"):
     st.title("찬양곡 추가" if mode == "add" else "찬양곡 수정")
     song = st.session_state.get("editing_song", {}) if mode == "edit" else {}
@@ -235,16 +250,13 @@ def show_add_edit_page(mode="add"):
                         st.success("저장 완료"); st.session_state.update({"page": "main", "editing_song": None}); st.rerun()
                     except Exception as e: st.error(f"저장 실패: {e}")
 
-# -------------------------------
-# 메인 로직
-# -------------------------------
-if st.session_state["credentials"]:
-    if not validate_and_refresh_credentials():
-        st.warning("로그인 세션이 만료되었습니다."); st.rerun()
-
 if st.session_state["page"] == "add_song": show_add_edit_page("add")
 elif st.session_state["page"] == "edit_song": show_add_edit_page("edit")
 else:
+    if st.session_state["credentials"]:
+        if not validate_and_refresh_credentials():
+            st.rerun()
+            
     with st.sidebar:
         st.header("계정")
         if st.session_state["credentials"] is None:
@@ -281,7 +293,6 @@ else:
                 st.link_button("악보 열기", st.session_state["slide_url"], use_container_width=True)
                 st.link_button("악보 폴더", SHEET_FOLDER_URL, use_container_width=True)
 
-            st.write("")
             if st.button("가사 PPT 생성", use_container_width=True):
                 if validate_and_refresh_credentials(): merge_and_upload_ppt(st.session_state["cart"], fname)
             
@@ -289,7 +300,6 @@ else:
                 st.link_button("가사 열기", st.session_state["ppt_slide_url"], use_container_width=True)
                 st.link_button("가사 폴더", LYRICS_FOLDER_URL, use_container_width=True)
 
-            st.divider()
             if st.button("전체 초기화", use_container_width=True):
                 st.session_state.update({"cart": [], "slide_url": None, "ppt_slide_url": None}); st.rerun()
         else: st.caption("곡을 담아주세요")
@@ -299,7 +309,6 @@ else:
         for h_doc in history:
             h, h_id = h_doc.to_dict(), h_doc.id
             with st.expander(f"{h['title']} ({h['created_at'].strftime('%m/%d %H:%M')})"):
-                # [수정 사항] 콘티 리스트에 담기 기능 복구
                 if st.button("콘티 리스트에 담기", key=f"hist_load_{h_id}", use_container_width=True, type="primary"):
                     missing_songs = []
                     new_items = []
@@ -312,16 +321,12 @@ else:
                                 new_items.append(song_data)
                         else:
                             missing_songs.append(s_item["title"])
-                    
                     st.session_state["cart"].extend(new_items)
-                    if missing_songs:
-                        st.warning(f"DB에서 삭제된 곡 제외: {', '.join(missing_songs)}")
-                    st.success(f"{len(new_items)}곡이 추가되었습니다.")
+                    if missing_songs: st.warning(f"DB에서 삭제된 곡 제외: {', '.join(missing_songs)}")
                     st.rerun()
 
                 if st.button("기록 삭제", key=f"hist_del_{h_id}", use_container_width=True):
                     delete_history_dialog(h_id, h['title'])
-                
                 for s in h.get("items", []): st.write(f"- {s['title']}")
                 st.link_button("파일 열기", h["file_url"], use_container_width=True)
 
@@ -342,14 +347,10 @@ else:
                 if h2.button("수정", key=f"edit_{s['id']}"):
                     st.session_state.update({"editing_song": s, "page": "edit_song"}); st.rerun()
                 if h3.button("삭제", key=f"del_{s['id']}"): delete_confirm_dialog(s['id'], s['title'])
-                
-                if s.get("tags"):
-                    st.markdown(" ".join([f"`#{tag}`" for tag in s["tags"]]))
-                
+                if s.get("tags"): st.markdown(" ".join([f"`#{tag}`" for tag in s["tags"]]))
                 if st.button("콘티 리스트에 담기", key=f"add_{s['id']}", use_container_width=True, type="primary"):
                     if s['id'] not in [item['id'] for item in st.session_state["cart"]]:
                         st.session_state["cart"].append(s); st.rerun()
-                
                 l1, l2, l3 = st.columns(3)
                 if s.get("youtube_url"):
                     l1.markdown(f'<a href="{s["youtube_url"]}" target="_blank" style="display:flex;align-items:center;justify-content:center;background-color:#F0F2F6;color:#262730;padding:5px 10px;border-radius:5px;text-decoration:none;font-size:13px;border:1px solid #E6E9EF;gap:5px;"><img src="https://upload.wikimedia.org/wikipedia/commons/e/ef/Youtube_logo.png" width="18">YouTube</a>', unsafe_allow_html=True)
