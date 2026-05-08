@@ -274,21 +274,24 @@ else:
                         st.session_state["cart"][idx], st.session_state["cart"][idx+1] = st.session_state["cart"][idx+1], st.session_state["cart"][idx]; st.rerun()
                     if c4.button("X", key=f"rm_{idx}"): st.session_state["cart"].pop(idx); st.rerun()
             
-            st.divider(); st.subheader("🚀 생성 시작")
-            if st.button("악보 슬라이드 생성", type="primary", use_container_width=True):
+            st.divider(); st.subheader("슬라이드 제작")
+            if st.button("악보 PPT 생성", type="primary", use_container_width=True):
                 if validate_and_refresh_credentials():
                     url = create_praise_slides(st.session_state["cart"], fname, Credentials(**st.session_state["credentials"]), SHEET_FOLDER_ID)
                     if url: st.session_state["slide_url"] = url; save_playlist_to_firebase(fname, st.session_state["cart"], url); st.rerun()
-            
-            if st.button("가사 PPT 병합 생성", use_container_width=True):
-                if validate_and_refresh_credentials(): merge_and_upload_ppt(st.session_state["cart"], fname)
-
             if st.session_state.get("slide_url"):
-                st.link_button("📄 악보 열기", st.session_state["slide_url"], use_container_width=True)
-                st.link_button("📂 악보 폴더", SHEET_FOLDER_URL, use_container_width=True)
+                st.link_button("악보 열기", st.session_state["slide_url"], use_container_width=True)
+                st.link_button("악보 폴더", SHEET_FOLDER_URL, use_container_width=True)
+
+            if st.button("가사 PPT 생성", use_container_width=True):
+                if validate_and_refresh_credentials(): merge_and_upload_ppt(st.session_state["cart"], fname)
             if st.session_state.get("ppt_slide_url"):
-                st.link_button("📺 가사 열기", st.session_state["ppt_slide_url"], use_container_width=True)
-                st.link_button("📂 가사 폴더", LYRICS_FOLDER_URL, use_container_width=True)
+                st.link_button("가사 PPT 열기", st.session_state["ppt_slide_url"], use_container_width=True)
+                st.link_button("가사 폴더", LYRICS_FOLDER_URL, use_container_width=True)
+
+            if st.button("전체 초기화"):
+                st.session_state.update({"cart": [], "slide_url": None, "ppt_slide_url": None}); st.rerun()
+
         else: st.caption("곡을 담아주세요")
 
         st.divider(); st.header("최근 생성 콘티")
@@ -311,11 +314,11 @@ else:
             with st.container(border=True):
                 h1, h2, h3 = st.columns([8,1,1])
                 h1.markdown(f"### {s['title']} ({s.get('start_key','C')})")
-                if h2.button("📝", key=f"edit_{s['id']}"):
+                if h2.button("수정", key=f"edit_{s['id']}"):
                     st.session_state.update({"editing_song": s, "page": "edit_song"}); st.rerun()
-                if h3.button("🗑️", key=f"del_{s['id']}"): delete_confirm_dialog(s['id'], s['title'])
+                if h3.button("삭제", key=f"del_{s['id']}"): delete_confirm_dialog(s['id'], s['title'])
                 
-                if st.button("📥 리스트에 담기", key=f"add_{s['id']}", use_container_width=True, type="primary"):
+                if st.button("콘티 리스트에 담기", key=f"add_{s['id']}", use_container_width=True, type="primary"):
                     if s['id'] not in [item['id'] for item in st.session_state["cart"]]:
                         st.session_state["cart"].append(s); st.rerun()
                 
