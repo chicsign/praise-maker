@@ -95,10 +95,14 @@ def create_praise_slides(cart_items, file_name, creds):
 
     requests = []
 
+    # 이미지 번호 카운터
+    image_number = 1
+
     # -------------------------------
     # 2분할 배치 로직
     # -------------------------------
     for i in range(0, len(cart_items), 2):
+
         page_id = f"page_{i}_{datetime.datetime.now().microsecond}"
 
         requests.append({
@@ -115,6 +119,7 @@ def create_praise_slides(cart_items, file_name, creds):
         # 첫 슬라이드 상단 파일명 표시
         # -------------------------------
         if i == 0:
+
             title_box_id = f"title_box_{datetime.datetime.now().microsecond}"
 
             requests.append({
@@ -172,6 +177,7 @@ def create_praise_slides(cart_items, file_name, creds):
         # 왼쪽 이미지
         # -------------------------------
         if cart_items[i].get("image_url"):
+
             requests.append({
                 "createImage": {
                     "url": cart_items[i]["image_url"],
@@ -197,7 +203,63 @@ def create_praise_slides(cart_items, file_name, creds):
                     }
                 }
             })
-        
+
+            # 왼쪽 이미지 번호
+            left_label_id = f"left_label_{image_number}"
+
+            requests.append({
+                "createShape": {
+                    "objectId": left_label_id,
+                    "shapeType": "TEXT_BOX",
+                    "elementProperties": {
+                        "pageObjectId": page_id,
+                        "size": {
+                            "width": {
+                                "magnitude": 30,
+                                "unit": "PT"
+                            },
+                            "height": {
+                                "magnitude": 30,
+                                "unit": "PT"
+                            }
+                        },
+                        "transform": {
+                            "scaleX": 1,
+                            "scaleY": 1,
+                            "translateX": 10,
+                            "translateY": 45,
+                            "unit": "PT"
+                        }
+                    }
+                }
+            })
+
+            requests.append({
+                "insertText": {
+                    "objectId": left_label_id,
+                    "text": str(image_number)
+                }
+            })
+
+            requests.append({
+                "updateTextStyle": {
+                    "objectId": left_label_id,
+                    "style": {
+                        "fontSize": {
+                            "magnitude": 18,
+                            "unit": "PT"
+                        },
+                        "bold": True
+                    },
+                    "textRange": {
+                        "type": "ALL"
+                    },
+                    "fields": "fontSize,bold"
+                }
+            })
+
+            image_number += 1
+
         # -------------------------------
         # 오른쪽 이미지
         # -------------------------------
@@ -205,6 +267,7 @@ def create_praise_slides(cart_items, file_name, creds):
             i + 1 < len(cart_items) and
             cart_items[i + 1].get("image_url")
         ):
+
             requests.append({
                 "createImage": {
                     "url": cart_items[i + 1]["image_url"],
@@ -230,6 +293,62 @@ def create_praise_slides(cart_items, file_name, creds):
                     }
                 }
             })
+
+            # 오른쪽 이미지 번호
+            right_label_id = f"right_label_{image_number}"
+
+            requests.append({
+                "createShape": {
+                    "objectId": right_label_id,
+                    "shapeType": "TEXT_BOX",
+                    "elementProperties": {
+                        "pageObjectId": page_id,
+                        "size": {
+                            "width": {
+                                "magnitude": 30,
+                                "unit": "PT"
+                            },
+                            "height": {
+                                "magnitude": 30,
+                                "unit": "PT"
+                            }
+                        },
+                        "transform": {
+                            "scaleX": 1,
+                            "scaleY": 1,
+                            "translateX": 370,
+                            "translateY": 45,
+                            "unit": "PT"
+                        }
+                    }
+                }
+            })
+
+            requests.append({
+                "insertText": {
+                    "objectId": right_label_id,
+                    "text": str(image_number)
+                }
+            })
+
+            requests.append({
+                "updateTextStyle": {
+                    "objectId": right_label_id,
+                    "style": {
+                        "fontSize": {
+                            "magnitude": 18,
+                            "unit": "PT"
+                        },
+                        "bold": True
+                    },
+                    "textRange": {
+                        "type": "ALL"
+                    },
+                    "fields": "fontSize,bold"
+                }
+            })
+
+            image_number += 1
 
     if requests:
         slides_service.presentations().batchUpdate(
