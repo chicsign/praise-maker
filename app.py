@@ -235,6 +235,13 @@ def show_add_edit_page(mode="add"):
                         st.success("저장 완료"); st.session_state.update({"page": "main", "editing_song": None}); st.rerun()
                     except Exception as e: st.error(f"저장 실패: {e}")
 
+# -------------------------------
+# 메인 로직
+# -------------------------------
+if st.session_state["credentials"]:
+    if not validate_and_refresh_credentials():
+        st.warning("로그인 세션이 만료되었습니다."); st.rerun()
+
 if st.session_state["page"] == "add_song": show_add_edit_page("add")
 elif st.session_state["page"] == "edit_song": show_add_edit_page("edit")
 else:
@@ -274,7 +281,7 @@ else:
                 st.link_button("악보 열기", st.session_state["slide_url"], use_container_width=True)
                 st.link_button("악보 폴더", SHEET_FOLDER_URL, use_container_width=True)
 
-            # 가사 PPT 생성 섹션
+            st.write("")
             if st.button("가사 PPT 생성", use_container_width=True):
                 if validate_and_refresh_credentials(): merge_and_upload_ppt(st.session_state["cart"], fname)
             
@@ -282,7 +289,8 @@ else:
                 st.link_button("가사 열기", st.session_state["ppt_slide_url"], use_container_width=True)
                 st.link_button("가사 폴더", LYRICS_FOLDER_URL, use_container_width=True)
 
-            if st.button("전체 초기화"):
+            st.divider()
+            if st.button("전체 초기화", use_container_width=True):
                 st.session_state.update({"cart": [], "slide_url": None, "ppt_slide_url": None}); st.rerun()
         else: st.caption("곡을 담아주세요")
 
@@ -296,13 +304,12 @@ else:
                 for s in h.get("items", []): st.write(f"- {s['title']}")
                 st.link_button("파일 열기", h["file_url"], use_container_width=True)
 
-    # 메인 영역
     t1, t2 = st.columns([5,1])
-    t1.title("Praise Maker 🎵")
+    t1.title("Praise Maker")
     if t2.button("찬양곡 추가", type="primary", use_container_width=True):
         st.session_state["page"] = "add_song"; st.rerun()
         
-    q = st.text_input("검색", placeholder="🔍 제목, 태그, Key 검색", label_visibility="collapsed").strip().lower()
+    q = st.text_input("검색", placeholder="제목, 태그, Key 검색", label_visibility="collapsed").strip().lower()
     
     docs = db.collection("songs").order_by("created_at", direction="DESCENDING").limit(50).stream()
     for doc in docs:
