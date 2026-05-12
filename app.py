@@ -388,6 +388,7 @@ def merge_and_upload_ppt(cart_items, filename):
 
     finally:
         shutil.rmtree(
+            temp_dir,
             ignore_errors=True
         )
 
