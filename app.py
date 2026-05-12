@@ -22,6 +22,7 @@ from googleapiclient.http import (
     MediaFileUpload,
     MediaIoBaseDownload
 )
+from googleapiclient.errors import HttpError
 
 from streamlit_cookies_manager import EncryptedCookieManager
 
@@ -235,160 +236,160 @@ def save_playlist_to_firebase(filename, cart_items, file_url):
     except Exception as e: st.error(f"콘티 저장 실패: {e}")
 
 def merge_and_upload_ppt(cart_items, filename):
+
     creds = Credentials(**st.session_state["credentials"])
 
-    with st.spinner("가사 PPT 제작 중..."):
+    drive_service = build(
+        'drive',
+        'v3',
+        credentials=creds
+    )
 
-        temp_dir = tempfile.mkdtemp()
+    slides_service = build(
+        'slides',
+        'v1',
+        credentials=creds
+    )
 
-        try:
-            processed_files = []
+    try:
 
-            for idx, item in enumerate(cart_items):
+        with st.spinner("가사 PPT 생성 중..."):
 
-                ppt_file_id = item.get("ppt_drive_file_id")
-                ppt_ext = item.get("ppt_ext", ".pptx")
+            # 최종 병합 프레젠테이션 생성
+            merged_presentation = slides_service.presentations().create(
+                body={
+                    "title": filename
+                }
+            ).execute()
+
+            merged_presentation_id = (
+                merged_presentation["presentationId"]
+            )
+
+            # 생성 직후 기본 빈 슬라이드 ID 저장
+            merged_data = slides_service.presentations().get(
+                presentationId=merged_presentation_id
+            ).execute()
+
+            default_slide_id = (
+                merged_data["slides"][0]["objectId"]
+            )
+
+            converted_file_ids = []
+
+            for item in cart_items:
+
+                ppt_file_id = item.get(
+                    "ppt_drive_file_id"
+                )
 
                 if not ppt_file_id:
                     continue
 
-                t_path = os.path.join(
-                    temp_dir,
-                    f"temp_{idx}{ppt_ext}"
+                # PPT/PPTX -> Google Slides 변환
+                converted_file = drive_service.files().copy(
+                    fileId=ppt_file_id,
+                    body={
+                        "name": f"{item['title']}_converted",
+                        "mimeType": "application/vnd.google-apps.presentation"
+                    },
+                    fields="id"
+                ).execute()
+
+                source_presentation_id = (
+                    converted_file["id"]
                 )
 
-                download_drive_file(
-                    ppt_file_id,
-                    t_path,
-                    creds
+                converted_file_ids.append(
+                    source_presentation_id
                 )
 
-                if os.path.splitext(t_path)[1].lower() == ".ppt":
-                    soffice = (
-                        r'C:\Program Files\LibreOffice\program\soffice.exe'
-                        if platform.system() == "Windows"
-                        else 'soffice'
-                    )
+                # source presentation 조회
+                source_presentation = (
+                    slides_service.presentations().get(
+                        presentationId=source_presentation_id
+                    ).execute()
+                )
 
-                    subprocess.run([
-                        soffice,
-                        '--headless',
-                        '--convert-to',
-                        'pptx',
-                        '--outdir',
-                        temp_dir,
-                        t_path
-                    ], check=True)
+                source_slides = source_presentation.get(
+                    "slides",
+                    []
+                )
 
-                    converted_path = os.path.join(
-                        temp_dir,
-                        os.path.splitext(
-                            os.path.basename(t_path)
-                        )[0] + ".pptx"
-                    )
+                # 슬라이드 복사
+                for slide in source_slides:
 
-                    if not os.path.exists(converted_path):
-                        raise Exception(f"PPTX 변환 실패: {t_path}")
+                    slide_id = slide["objectId"]
 
-                    t_path = converted_path
+                    slides_service.presentations().pages().copyTo(
+                        presentationId=source_presentation_id,
+                        pageObjectId=slide_id,
+                        body={
+                            "presentationId": merged_presentation_id
+                        }
+                    ).execute()
 
-                processed_files.append(t_path)
-
-            if not processed_files:
-                st.error("PPT 파일이 없습니다.")
-                return
-
-            merged_prs = Presentation()
-
-            while len(merged_prs.slides) > 0:
-                rId = merged_prs.slides._sldIdLst[0].rId
-                merged_prs.part.drop_rel(rId)
-                del merged_prs.slides._sldIdLst[0]
-
-            merged_prs.slide_width = Inches(13.333)
-            merged_prs.slide_height = Inches(7.5)
-
-            for path in processed_files:
-
-                try:
-                    source = Presentation(path)
-                except Exception as e:
-                    st.warning(f"PPT 로드 실패: {path} / {e}")
-                    continue
-
-                for slide in source.slides:
-
-                    new_slide = merged_prs.slides.add_slide(
-                        merged_prs.slide_layouts[6]
-                    )
-
-                    for shape in slide.shapes:
-
-                        new_element = deepcopy(
-                            shape.element
-                        )
-
-                        new_slide.shapes._spTree.insert_element_before(
-                            new_element,
-                            'p:extLst'
-                        )
-
-            out_path = os.path.join(
-                temp_dir,
-                f"{filename}.pptx"
-            )
-
-            merged_prs.save(out_path)
-
-            drive_service = build(
-                'drive',
-                'v3',
-                credentials=creds
-            )
-
-            file = drive_service.files().create(
+            # 기본 생성된 빈 슬라이드 제거
+            slides_service.presentations().batchUpdate(
+                presentationId=merged_presentation_id,
                 body={
-                    'name': filename,
-                    'parents': [LYRICS_FOLDER_ID],
-                    'mimeType': 'application/vnd.google-apps.presentation'
-                },
-                media_body=MediaFileUpload(
-                    out_path,
-                    mimetype='application/vnd.openxmlformats-officedocument.presentationml.presentation'
-                ),
-                fields='id, webViewLink'
-            ).execute()
-
-            drive_service.permissions().create(
-                fileId=file['id'],
-                body={
-                    'type': 'anyone',
-                    'role': 'reader'
+                    "requests": [
+                        {
+                            "deleteObject": {
+                                "objectId": default_slide_id
+                            }
+                        }
+                    ]
                 }
             ).execute()
 
-            st.session_state["ppt_slide_url"] = file.get(
-                'webViewLink'
+            # 공개 권한 부여
+            drive_service.permissions().create(
+                fileId=merged_presentation_id,
+                body={
+                    "type": "anyone",
+                    "role": "reader"
+                }
+            ).execute()
+
+            # 임시 변환 Google Slides 삭제
+            for converted_id in converted_file_ids:
+
+                try:
+                    drive_service.files().delete(
+                        fileId=converted_id
+                    ).execute()
+
+                except Exception:
+                    pass
+
+            final_url = (
+                f"https://docs.google.com/presentation/d/"
+                f"{merged_presentation_id}/edit"
+            )
+
+            st.session_state["ppt_slide_url"] = (
+                final_url
             )
 
             save_playlist_to_firebase(
                 filename,
                 cart_items,
-                st.session_state["ppt_slide_url"]
+                final_url
             )
 
-            st.success("가사 PPT 업로드 완료")
+            st.success("가사 PPT 생성 완료")
 
             st.rerun()
 
-        except Exception as e:
-            st.error(f"오류: {e}")
+    except Exception as e:
 
-        finally:
-            shutil.rmtree(
-                temp_dir,
-                ignore_errors=True
-            )
+        st.error(f"오류: {e}")
+
+    finally:
+        shutil.rmtree(
+            ignore_errors=True
+        )
 
 def show_add_edit_page(mode="add"):
     st.title("찬양곡 추가" if mode == "add" else "찬양곡 수정")
