@@ -2,24 +2,26 @@ import streamlit as st
 import datetime
 import os
 import io
-import requests
 import tempfile
 import shutil
 import subprocess
 import platform
 
+from copy import deepcopy
+
 from pptx import Presentation
-from pptx.util import Inches, Pt
-from pptx.enum.text import PP_ALIGN
+from pptx.util import Inches
 
 from services.firebase_service import db, bucket
 from services.google_slides_service import create_flow, create_praise_slides
 
 from google.oauth2.credentials import Credentials
 from google.auth.transport.requests import Request
-from google.auth.exceptions import RefreshError
 from googleapiclient.discovery import build
-from googleapiclient.http import MediaFileUpload
+from googleapiclient.http import (
+    MediaFileUpload,
+    MediaIoBaseDownload
+)
 
 from streamlit_cookies_manager import EncryptedCookieManager
 
@@ -36,6 +38,7 @@ st.set_page_config(
 # -------------------------------
 SHEET_FOLDER_ID = os.environ.get("SHEET_FOLDER_ID", "FOLDER_ID")
 LYRICS_FOLDER_ID = os.environ.get("LYRICS_FOLDER_ID", "FOLDER_ID")
+PPT_FOLDER_ID = os.environ.get("PPT_FOLDER_ID", "FOLDER_ID")
 
 SHEET_FOLDER_URL = f"https://drive.google.com/drive/folders/{SHEET_FOLDER_ID}"
 LYRICS_FOLDER_URL = f"https://drive.google.com/drive/folders/{LYRICS_FOLDER_ID}"
@@ -105,8 +108,10 @@ def validate_and_refresh_credentials():
             cookies["token"], cookies["refresh_token"] = creds.token, creds.refresh_token
             cookies.save()
         return True
-    except:
-        logout(); return False
+    except Exception as e:
+        st.error(str(e))
+        logout()
+        return False
 
 def get_user_info(creds):
     try:
@@ -149,6 +154,75 @@ if st.session_state["credentials"] is None:
             st.session_state["user_email"] = get_user_info(Credentials(**st.session_state["credentials"]))
         else: st.rerun()
 
+
+def upload_file_to_drive(uploaded_file, folder_id, creds):
+    drive_service = build('drive', 'v3', credentials=creds)
+
+    safe_name = (
+        f"{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}_"
+        f"{uploaded_file.name}"
+    )
+
+    ext = os.path.splitext(uploaded_file.name)[1]
+
+    with tempfile.NamedTemporaryFile(delete=False, suffix=ext) as tmp:
+        tmp.write(uploaded_file.getbuffer())
+        temp_path = tmp.name
+
+    file_metadata = {
+        'name': safe_name,
+        'parents': [folder_id]
+    }
+    mime_type = (
+        'application/vnd.ms-powerpoint'
+        if ext.lower() == '.ppt'
+        else 'application/vnd.openxmlformats-officedocument.presentationml.presentation'
+    )
+    media = MediaFileUpload(
+        temp_path,
+        mimetype=mime_type,
+        resumable=True
+    )
+
+    uploaded = drive_service.files().create(
+        body=file_metadata,
+        media_body=media,
+        fields='id, webViewLink'
+    ).execute()
+
+    drive_service.permissions().create(
+        fileId=uploaded['id'],
+        body={
+            'type': 'anyone',
+            'role': 'reader'
+        }
+    ).execute()
+
+    os.remove(temp_path)
+    return {
+        "file_id": uploaded["id"],
+        "view_link": uploaded["webViewLink"]
+    }
+
+def download_drive_file(file_id, output_path, creds):
+
+    drive_service = build('drive', 'v3', credentials=creds)
+
+    request = drive_service.files().get_media(
+        fileId=file_id
+    )
+
+    with io.FileIO(output_path, 'wb') as file:
+        downloader = MediaIoBaseDownload(
+            file,
+            request
+        )
+
+        done = False
+
+        while not done:
+            _, done = downloader.next_chunk()
+
 # -------------------------------
 # 생성 및 저장 로직 (이하 기존 코드 유지)
 # -------------------------------
@@ -162,53 +236,159 @@ def save_playlist_to_firebase(filename, cart_items, file_url):
 
 def merge_and_upload_ppt(cart_items, filename):
     creds = Credentials(**st.session_state["credentials"])
+
     with st.spinner("가사 PPT 제작 중..."):
+
         temp_dir = tempfile.mkdtemp()
+
         try:
             processed_files = []
+
             for idx, item in enumerate(cart_items):
-                if not item.get("ppt_url"): continue
-                r = requests.get(item["ppt_url"])
-                ext = ".ppt" if item["ppt_url"].lower().endswith(".ppt") else ".pptx"
-                t_path = os.path.join(temp_dir, f"temp_{idx}{ext}")
-                with open(t_path, "wb") as f: f.write(r.content)
-                if ext == ".ppt":
-                    soffice = r'C:\Program Files\LibreOffice\program\soffice.exe' if platform.system() == "Windows" else 'soffice'
-                    subprocess.run([soffice, '--headless', '--convert-to', 'pptx', '--outdir', temp_dir, t_path], check=True)
-                    t_path = os.path.join(temp_dir, os.path.splitext(os.path.basename(t_path))[0] + ".pptx")
+
+                ppt_file_id = item.get("ppt_drive_file_id")
+                ppt_ext = item.get("ppt_ext", ".pptx")
+
+                if not ppt_file_id:
+                    continue
+
+                t_path = os.path.join(
+                    temp_dir,
+                    f"temp_{idx}{ppt_ext}"
+                )
+
+                download_drive_file(
+                    ppt_file_id,
+                    t_path,
+                    creds
+                )
+
+                if os.path.splitext(t_path)[1].lower() == ".ppt":
+                    soffice = (
+                        r'C:\Program Files\LibreOffice\program\soffice.exe'
+                        if platform.system() == "Windows"
+                        else 'soffice'
+                    )
+
+                    subprocess.run([
+                        soffice,
+                        '--headless',
+                        '--convert-to',
+                        'pptx',
+                        '--outdir',
+                        temp_dir,
+                        t_path
+                    ], check=True)
+
+                    converted_path = os.path.join(
+                        temp_dir,
+                        os.path.splitext(
+                            os.path.basename(t_path)
+                        )[0] + ".pptx"
+                    )
+
+                    if not os.path.exists(converted_path):
+                        raise Exception(f"PPTX 변환 실패: {t_path}")
+
+                    t_path = converted_path
+
                 processed_files.append(t_path)
-            
-            if not processed_files: st.error("파일이 없습니다."); return
+
+            if not processed_files:
+                st.error("PPT 파일이 없습니다.")
+                return
 
             merged_prs = Presentation()
-            merged_prs.slide_width, merged_prs.slide_height = Inches(13.333), Inches(7.5)
-            xml_slides = merged_prs.slides._sldIdLst
-            if len(xml_slides) > 0: del xml_slides[0]
+
+            while len(merged_prs.slides) > 0:
+                rId = merged_prs.slides._sldIdLst[0].rId
+                merged_prs.part.drop_rel(rId)
+                del merged_prs.slides._sldIdLst[0]
+
+            merged_prs.slide_width = Inches(13.333)
+            merged_prs.slide_height = Inches(7.5)
 
             for path in processed_files:
-                source = Presentation(path)
+
+                try:
+                    source = Presentation(path)
+                except Exception as e:
+                    st.warning(f"PPT 로드 실패: {path} / {e}")
+                    continue
+
                 for slide in source.slides:
-                    new_slide = merged_prs.slides.add_slide(merged_prs.slide_layouts[6])
+
+                    new_slide = merged_prs.slides.add_slide(
+                        merged_prs.slide_layouts[6]
+                    )
+
                     for shape in slide.shapes:
-                        if shape.shape_type == 13:
-                            new_slide.shapes.add_picture(io.BytesIO(shape.image.blob), 0, 0, width=merged_prs.slide_width, height=merged_prs.slide_height)
-            
-            out_path = os.path.join(temp_dir, f"{filename}.pptx")
+
+                        new_element = deepcopy(
+                            shape.element
+                        )
+
+                        new_slide.shapes._spTree.insert_element_before(
+                            new_element,
+                            'p:extLst'
+                        )
+
+            out_path = os.path.join(
+                temp_dir,
+                f"{filename}.pptx"
+            )
+
             merged_prs.save(out_path)
-            
-            drive_service = build('drive', 'v3', credentials=creds)
+
+            drive_service = build(
+                'drive',
+                'v3',
+                credentials=creds
+            )
+
             file = drive_service.files().create(
-                body={'name': f"{filename}.pptx", 'parents': [LYRICS_FOLDER_ID], 'mimeType': 'application/vnd.google-apps.presentation'},
-                media_body=MediaFileUpload(out_path, mimetype='application/vnd.openxmlformats-officedocument.presentationml.presentation'),
+                body={
+                    'name': filename,
+                    'parents': [LYRICS_FOLDER_ID],
+                    'mimeType': 'application/vnd.google-apps.presentation'
+                },
+                media_body=MediaFileUpload(
+                    out_path,
+                    mimetype='application/vnd.openxmlformats-officedocument.presentationml.presentation'
+                ),
                 fields='id, webViewLink'
             ).execute()
-            
-            st.session_state["ppt_slide_url"] = file.get('webViewLink')
-            save_playlist_to_firebase(filename, cart_items, st.session_state["ppt_slide_url"])
-            st.success("가사 PPT 업로드 완료"); st.rerun()
-        except Exception as e: st.error(f"오류: {e}")
+
+            drive_service.permissions().create(
+                fileId=file['id'],
+                body={
+                    'type': 'anyone',
+                    'role': 'reader'
+                }
+            ).execute()
+
+            st.session_state["ppt_slide_url"] = file.get(
+                'webViewLink'
+            )
+
+            save_playlist_to_firebase(
+                filename,
+                cart_items,
+                st.session_state["ppt_slide_url"]
+            )
+
+            st.success("가사 PPT 업로드 완료")
+
+            st.rerun()
+
+        except Exception as e:
+            st.error(f"오류: {e}")
+
         finally:
-            shutil.rmtree(temp_dir, ignore_errors=True)
+            shutil.rmtree(
+                temp_dir,
+                ignore_errors=True
+            )
 
 def show_add_edit_page(mode="add"):
     st.title("찬양곡 추가" if mode == "add" else "찬양곡 수정")
@@ -237,16 +417,42 @@ def show_add_edit_page(mode="add"):
             if title:
                 with st.spinner("저장 중..."):
                     try:
-                        data = {"title": title, "start_key": start_key, "youtube_url": youtube_url, "tags": [t.strip() for t in tags_input.split(",")] if tags_input else [], "created_at": datetime.datetime.now(), "image_url": song.get("image_url", ""), "ppt_url": song.get("ppt_url", "")}
+                        data = {
+                            "title": title,
+                            "start_key": start_key,
+                            "youtube_url": youtube_url,
+                            "tags": [t.strip() for t in tags_input.split(",")] if tags_input else [],
+                            "updated_at": datetime.datetime.now(),
+                            "image_url": song.get("image_url", ""),
+                            "ppt_drive_file_id": song.get("ppt_drive_file_id", ""),
+                            "ppt_drive_url": song.get("ppt_drive_url", ""),
+                             "ppt_ext": song.get("ppt_ext", ".pptx")
+                        }
                         if image_file:
                             blob = bucket.blob(f"songs/images/{datetime.datetime.now().strftime('%H%M%S')}_{image_file.name}")
                             blob.upload_from_file(image_file, content_type=image_file.type); blob.make_public(); data["image_url"] = blob.public_url
                         if ppt_file:
-                            blob = bucket.blob(f"songs/ppts/{datetime.datetime.now().strftime('%H%M%S')}_{ppt_file.name}")
-                            blob.upload_from_file(ppt_file, content_type=ppt_file.type); blob.make_public(); data["ppt_url"] = blob.public_url
+
+                            creds = Credentials(
+                                **st.session_state["credentials"]
+                            )
+
+                            uploaded = upload_file_to_drive(
+                                ppt_file,
+                                PPT_FOLDER_ID,
+                                creds
+                            )
+
+                            data["ppt_drive_file_id"] = uploaded["file_id"]
+                            data["ppt_drive_url"] = uploaded["view_link"]
+                            data["ppt_ext"] = os.path.splitext(ppt_file.name)[1].lower()
                         
-                        if mode == "add": db.collection("songs").add(data)
-                        else: db.collection("songs").document(song["id"]).update(data)
+                        if mode == "add":
+                            data["created_at"] = datetime.datetime.now()
+                            db.collection("songs").add(data)
+
+                        else:
+                            db.collection("songs").document(song["id"]).update(data)
                         st.success("저장 완료"); st.session_state.update({"page": "main", "editing_song": None}); st.rerun()
                     except Exception as e: st.error(f"저장 실패: {e}")
 
@@ -354,4 +560,8 @@ else:
                 if s.get("youtube_url"):
                     l1.markdown(f'<a href="{s["youtube_url"]}" target="_blank" style="display:flex;align-items:center;justify-content:center;background-color:#F0F2F6;color:#262730;padding:5px 10px;border-radius:5px;text-decoration:none;font-size:13px;border:1px solid #E6E9EF;gap:5px;"><img src="https://upload.wikimedia.org/wikipedia/commons/e/ef/Youtube_logo.png" width="18">YouTube</a>', unsafe_allow_html=True)
                 if s.get("image_url"): l2.markdown(f'<a href="{s["image_url"]}" target="_blank" style="display:flex;align-items:center;justify-content:center;background-color:#F0F2F6;color:#262730;padding:5px 10px;border-radius:5px;text-decoration:none;font-size:13px;border:1px solid #E6E9EF;">악보 이미지</a>', unsafe_allow_html=True)
-                if s.get("ppt_url"): l3.markdown(f'<a href="{s["ppt_url"]}" target="_blank" style="display:flex;align-items:center;justify-content:center;background-color:#F0F2F6;color:#262730;padding:5px 10px;border-radius:5px;text-decoration:none;font-size:13px;border:1px solid #E6E9EF;">가사 PPT</a>', unsafe_allow_html=True)
+                if s.get("ppt_drive_url"):
+                    l3.markdown(
+                        f'<a href="{s["ppt_drive_url"]}" target="_blank" style="display:flex;align-items:center;justify-content:center;background-color:#F0F2F6;color:#262730;padding:5px 10px;border-radius:5px;text-decoration:none;font-size:13px;border:1px solid #E6E9EF;">가사 PPT</a>',
+                        unsafe_allow_html=True
+                    )
