@@ -6,7 +6,7 @@ import tempfile
 import shutil
 import subprocess
 import platform
-
+import requests
 from copy import deepcopy
 
 from pptx import Presentation
@@ -237,45 +237,21 @@ def save_playlist_to_firebase(filename, cart_items, file_url):
 
 def merge_and_upload_ppt(cart_items, filename):
 
-    creds = Credentials(**st.session_state["credentials"])
-
-    drive_service = build(
-        'drive',
-        'v3',
-        credentials=creds
-    )
-
-    slides_service = build(
-        'slides',
-        'v1',
-        credentials=creds
-    )
-
     try:
 
         with st.spinner("가사 PPT 생성 중..."):
 
-            # 최종 병합 프레젠테이션 생성
-            merged_presentation = slides_service.presentations().create(
-                body={
-                    "title": filename
-                }
-            ).execute()
-
-            merged_presentation_id = (
-                merged_presentation["presentationId"]
+            creds = Credentials(
+                **st.session_state["credentials"]
             )
 
-            # 생성 직후 기본 빈 슬라이드 ID 저장
-            merged_data = slides_service.presentations().get(
-                presentationId=merged_presentation_id
-            ).execute()
-
-            default_slide_id = (
-                merged_data["slides"][0]["objectId"]
+            drive_service = build(
+                'drive',
+                'v3',
+                credentials=creds
             )
 
-            converted_file_ids = []
+            converted_ids = []
 
             for item in cart_items:
 
@@ -286,87 +262,45 @@ def merge_and_upload_ppt(cart_items, filename):
                 if not ppt_file_id:
                     continue
 
-                # PPT/PPTX -> Google Slides 변환
-                converted_file = drive_service.files().copy(
+                # Google Slides 변환
+                converted = drive_service.files().copy(
                     fileId=ppt_file_id,
                     body={
-                        "name": f"{item['title']}_converted",
-                        "mimeType": "application/vnd.google-apps.presentation"
+                        "name": f"{item['title']}_slide",
+                        "mimeType":
+                            "application/vnd.google-apps.presentation"
                     },
                     fields="id"
                 ).execute()
 
-                source_presentation_id = (
-                    converted_file["id"]
+                converted_ids.append(
+                    converted["id"]
                 )
 
-                converted_file_ids.append(
-                    source_presentation_id
-                )
+            if not converted_ids:
 
-                # source presentation 조회
-                source_presentation = (
-                    slides_service.presentations().get(
-                        presentationId=source_presentation_id
-                    ).execute()
-                )
+                st.error("PPT 파일이 없습니다.")
+                return
 
-                source_slides = source_presentation.get(
-                    "slides",
-                    []
-                )
-
-                # 슬라이드 복사
-                for slide in source_slides:
-
-                    slide_id = slide["objectId"]
-
-                    slides_service.presentations().pages().copyTo(
-                        presentationId=source_presentation_id,
-                        pageObjectId=slide_id,
-                        body={
-                            "presentationId": merged_presentation_id
-                        }
-                    ).execute()
-
-            # 기본 생성된 빈 슬라이드 제거
-            slides_service.presentations().batchUpdate(
-                presentationId=merged_presentation_id,
-                body={
-                    "requests": [
-                        {
-                            "deleteObject": {
-                                "objectId": default_slide_id
-                            }
-                        }
-                    ]
-                }
-            ).execute()
-
-            # 공개 권한 부여
-            drive_service.permissions().create(
-                fileId=merged_presentation_id,
-                body={
-                    "type": "anyone",
-                    "role": "reader"
-                }
-            ).execute()
-
-            # 임시 변환 Google Slides 삭제
-            for converted_id in converted_file_ids:
-
-                try:
-                    drive_service.files().delete(
-                        fileId=converted_id
-                    ).execute()
-
-                except Exception:
-                    pass
-
-            final_url = (
-                f"https://docs.google.com/presentation/d/"
-                f"{merged_presentation_id}/edit"
+            # Apps Script 호출
+            response = requests.post(
+                os.environ["APPS_SCRIPT_URL"],
+                json={
+                    "fileIds": converted_ids,
+                    "outputName": filename,
+                    "folderId": LYRICS_FOLDER_ID
+                },
+                timeout=300
             )
+
+            result = response.json()
+
+            if not result.get("success"):
+
+                st.error(result.get("error"))
+                return
+
+            final_url = result["url"]
 
             st.session_state["ppt_slide_url"] = (
                 final_url
@@ -379,6 +313,18 @@ def merge_and_upload_ppt(cart_items, filename):
             )
 
             st.success("가사 PPT 생성 완료")
+
+            # 임시 Slides 삭제
+            for file_id in converted_ids:
+
+                try:
+
+                    drive_service.files().delete(
+                        fileId=file_id
+                    ).execute()
+
+                except:
+                    pass
 
             st.rerun()
 

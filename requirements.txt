@@ -80,3 +80,4 @@ xlsxwriter==3.2.9
 google-api-python-client
 google-auth-oauthlib
 google-auth-httplib2
+requests
