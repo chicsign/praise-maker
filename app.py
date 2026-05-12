@@ -386,12 +386,6 @@ def merge_and_upload_ppt(cart_items, filename):
 
         st.error(f"오류: {e}")
 
-    finally:
-        shutil.rmtree(
-            temp_dir,
-            ignore_errors=True
-        )
-
 def show_add_edit_page(mode="add"):
     st.title("찬양곡 추가" if mode == "add" else "찬양곡 수정")
     song = st.session_state.get("editing_song", {}) if mode == "edit" else {}
