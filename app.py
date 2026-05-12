@@ -292,6 +292,9 @@ def merge_and_upload_ppt(cart_items, filename):
                 },
                 timeout=300
             )
+            st.write(response.status_code)
+            st.write(response.text)
+
 
             result = response.json()
 
