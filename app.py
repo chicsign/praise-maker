@@ -309,6 +309,8 @@ def merge_and_upload_ppt(cart_items, filename):
             )
             st.write(response.status_code)
             st.write(response.text)
+            st.json(response.json())
+            st.write(os.environ["APPS_SCRIPT_URL"])
 
 
             result = response.json()
