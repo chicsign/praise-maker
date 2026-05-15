@@ -303,8 +303,7 @@ def merge_and_upload_ppt(cart_items, filename):
                 os.environ["APPS_SCRIPT_URL"],
                 json={
                     "presentation_ids": slide_ids,
-                    "output_name": filename,
-                    "folder_id": LYRICS_FOLDER_ID
+                    "output_name": filename
                 },
                 timeout=300
             )
@@ -321,7 +320,29 @@ def merge_and_upload_ppt(cart_items, filename):
                 st.error(result.get("error"))
                 return
 
-            final_url = result["url"]
+            presentation_id = result["presentation_id"]
+
+            # 원하는 폴더로 이동
+            file = drive_service.files().get(
+                fileId=presentation_id,
+                fields="parents"
+            ).execute()
+
+            previous_parents = ",".join(
+                file.get("parents", [])
+            )
+
+            drive_service.files().update(
+                fileId=presentation_id,
+                addParents=LYRICS_FOLDER_ID,
+                removeParents=previous_parents,
+                fields="id, parents"
+            ).execute()
+
+            final_url = (
+                f"https://docs.google.com/presentation/d/"
+                f"{presentation_id}/edit"
+            )
 
             st.session_state["ppt_slide_url"] = (
                 final_url
