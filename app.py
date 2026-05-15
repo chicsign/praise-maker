@@ -303,14 +303,15 @@ def merge_and_upload_ppt(cart_items, filename):
                 os.environ["APPS_SCRIPT_URL"],
                 json={
                     "presentation_ids": slide_ids,
-                    "output_name": filename
+                    "output_name": filename,
+                    "folder_id": LYRICS_FOLDER_ID
                 },
                 timeout=300
             )
-            st.write(response.status_code)
-            st.write(response.text)
-            st.json(response.json())
-            st.write(os.environ["APPS_SCRIPT_URL"])
+            # st.write(response.status_code)
+            # st.write(response.text)
+            # st.json(response.json())
+            # st.write(os.environ["APPS_SCRIPT_URL"])
 
 
             result = response.json()
