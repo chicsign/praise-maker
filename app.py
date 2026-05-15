@@ -136,8 +136,12 @@ if st.query_params.get("code") and st.session_state["credentials"] is None:
         st.session_state["credentials"] = creds_dict
         user_info = get_user_info(creds)
 
-        st.session_state["user_email"] = user_info.get("email")
-        st.session_state["user_name"] = user_info.get("name")
+        if user_info:
+            st.session_state["user_email"] = user_info.get("email")
+            st.session_state["user_name"] = user_info.get("name")
+        else:
+            st.session_state["user_email"] = None
+            st.session_state["user_name"] = None
  
         st.query_params.clear()
         st.rerun()
@@ -432,6 +436,7 @@ else:
             st.success(
                 f"{st.session_state.get('user_name') or st.session_state.get('user_email')}님"
             )
+            if st.button("로그아웃"): logout(); st.rerun()
             st.divider(); st.header("폴더 바로 가기")
             st.link_button(
                 "악보 콘티 폴더",
@@ -444,7 +449,7 @@ else:
                 LYRICS_FOLDER_URL,
                 use_container_width=True
             )
-            if st.button("로그아웃"): logout(); st.rerun()
+
 
         
         st.divider(); st.header("콘티 리스트")
