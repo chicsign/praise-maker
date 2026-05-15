@@ -157,39 +157,65 @@ if st.session_state["credentials"] is None:
 
 
 def upload_file_to_drive(uploaded_file, folder_id, creds):
-    drive_service = build('drive', 'v3', credentials=creds)
+
+    drive_service = build(
+        'drive',
+        'v3',
+        credentials=creds
+    )
 
     safe_name = (
         f"{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}_"
         f"{uploaded_file.name}"
     )
 
-    ext = os.path.splitext(uploaded_file.name)[1]
+    ext = os.path.splitext(
+        uploaded_file.name
+    )[1]
 
-    with tempfile.NamedTemporaryFile(delete=False, suffix=ext) as tmp:
-        tmp.write(uploaded_file.getbuffer())
+    with tempfile.NamedTemporaryFile(
+        delete=False,
+        suffix=ext
+    ) as tmp:
+
+        tmp.write(
+            uploaded_file.getbuffer()
+        )
+
         temp_path = tmp.name
 
-    file_metadata = {
-        'name': safe_name,
-        'parents': [folder_id]
-    }
     mime_type = (
         'application/vnd.ms-powerpoint'
         if ext.lower() == '.ppt'
         else 'application/vnd.openxmlformats-officedocument.presentationml.presentation'
     )
+
     media = MediaFileUpload(
         temp_path,
         mimetype=mime_type,
         resumable=True
     )
 
+    # PPT 업로드 + Slides 변환
     uploaded = drive_service.files().create(
-        body=file_metadata,
+        body={
+            'name': safe_name,
+            'parents': [folder_id],
+            'mimeType': 'application/vnd.google-apps.presentation'
+        },
         media_body=media,
         fields='id, webViewLink'
     ).execute()
+
+    # 실제 변환 결과 확인
+    file_info = drive_service.files().get(
+        fileId=uploaded['id'],
+        fields='mimeType'
+    ).execute()
+
+    if file_info["mimeType"] != "application/vnd.google-apps.presentation":
+        os.remove(temp_path)
+        raise Exception("Google Slides 변환 실패")
 
     drive_service.permissions().create(
         fileId=uploaded['id'],
@@ -200,6 +226,7 @@ def upload_file_to_drive(uploaded_file, folder_id, creds):
     ).execute()
 
     os.remove(temp_path)
+
     return {
         "file_id": uploaded["id"],
         "view_link": uploaded["webViewLink"]
@@ -251,42 +278,31 @@ def merge_and_upload_ppt(cart_items, filename):
                 credentials=creds
             )
 
-            converted_ids = []
+            slide_ids = []
 
             for item in cart_items:
 
-                ppt_file_id = item.get(
+                slide_file_id = item.get(
                     "ppt_drive_file_id"
                 )
 
-                if not ppt_file_id:
+                if not slide_file_id:
                     continue
 
-                # Google Slides 변환
-                converted = drive_service.files().copy(
-                    fileId=ppt_file_id,
-                    body={
-                        "name": f"{item['title']}_slide",
-                        "mimeType":
-                            "application/vnd.google-apps.presentation"
-                    },
-                    fields="id"
-                ).execute()
-
-                converted_ids.append(
-                    converted["id"]
+                slide_ids.append(
+                    slide_file_id
                 )
 
-            if not converted_ids:
+            if not slide_ids:
 
-                st.error("PPT 파일이 없습니다.")
+                st.error("슬라이드 파일이 없습니다.")
                 return
 
             # Apps Script 호출
             response = requests.post(
                 os.environ["APPS_SCRIPT_URL"],
                 json={
-                    "fileIds": converted_ids,
+                    "fileIds": slide_ids,
                     "outputName": filename,
                     "folderId": LYRICS_FOLDER_ID
                 },
@@ -316,20 +332,6 @@ def merge_and_upload_ppt(cart_items, filename):
             )
 
             st.success("가사 PPT 생성 완료")
-
-            # 임시 Slides 삭제
-            for file_id in converted_ids:
-
-                try:
-
-                    drive_service.files().delete(
-                        fileId=file_id
-                    ).execute()
-
-                except:
-                    pass
-
-            st.rerun()
 
     except Exception as e:
 
