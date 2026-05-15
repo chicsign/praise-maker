@@ -24,8 +24,6 @@ from googleapiclient.http import (
 )
 from googleapiclient.errors import HttpError
 
-from streamlit_cookies_manager import EncryptedCookieManager
-
 # 로컬 테스트 시 보안 연결 허용
 os.environ['OAUTHLIB_INSECURE_TRANSPORT'] = '1'
 
@@ -45,22 +43,18 @@ SHEET_FOLDER_URL = f"https://drive.google.com/drive/folders/{SHEET_FOLDER_ID}"
 LYRICS_FOLDER_URL = f"https://drive.google.com/drive/folders/{LYRICS_FOLDER_ID}"
 
 # -------------------------------
-# 쿠키 매니저 설정
-# -------------------------------
-cookies = EncryptedCookieManager(
-    prefix="praise_maker/",
-    password=os.environ.get("COOKIE_SECRET", "dev-secret")
-)
-
-if not cookies.ready():
-    st.stop()
-
-# -------------------------------
 # 세션 상태 초기화
 # -------------------------------
 session_keys = {
-    "credentials": None, "user_email": None, "page": "main",
-    "cart": [], "editing_song": None, "slide_url": None, "ppt_slide_url": None
+    "credentials": None,
+    "user_email": None,
+    "user_name": None,
+    "last_activity": None,
+    "page": "main",
+    "cart": [],
+    "editing_song": None,
+    "slide_url": None,
+    "ppt_slide_url": None
 }
 
 for key, default in session_keys.items():
@@ -90,9 +84,14 @@ def delete_history_dialog(doc_id, title):
     if c2.button("취소", use_container_width=True): st.rerun()
 
 def logout():
-    st.session_state.update({"credentials": None, "user_email": None, "slide_url": None, "ppt_slide_url": None})
-    cookies["token"], cookies["refresh_token"] = "", ""
-    cookies.save()
+    st.session_state.update({
+        "credentials": None,
+        "user_email": None,
+        "user_name": None,
+        "last_activity": None,
+        "slide_url": None,
+        "ppt_slide_url": None
+    })
 
 def validate_and_refresh_credentials():
     creds_data = st.session_state.get("credentials")
@@ -106,8 +105,7 @@ def validate_and_refresh_credentials():
                 "token_uri": creds.token_uri, "client_id": creds.client_id,
                 "client_secret": creds.client_secret, "scopes": creds.scopes
             }
-            cookies["token"], cookies["refresh_token"] = creds.token, creds.refresh_token
-            cookies.save()
+
         return True
     except Exception as e:
         st.error(str(e))
@@ -118,7 +116,10 @@ def get_user_info(creds):
     try:
         service = build('oauth2', 'v2', credentials=creds)
         user_info = service.userinfo().get().execute()
-        return user_info.get("email")
+        return {
+            "email": user_info.get("email"),
+            "name": user_info.get("name")
+        }
     except: return None
 
 # --- OAuth 콜백 처리  ---
@@ -133,27 +134,15 @@ if st.query_params.get("code") and st.session_state["credentials"] is None:
             "client_secret": creds.client_secret, "scopes": creds.scopes
         }
         st.session_state["credentials"] = creds_dict
-        st.session_state["user_email"] = get_user_info(creds)
-        cookies["token"], cookies["refresh_token"] = creds.token, creds.refresh_token
-        cookies.save()
+        user_info = get_user_info(creds)
+
+        st.session_state["user_email"] = user_info.get("email")
+        st.session_state["user_name"] = user_info.get("name")
+ 
         st.query_params.clear()
         st.rerun()
     except Exception as e:
         st.error(f"로그인 처리 중 오류 발생: {e}")
-
-# 쿠키 기반 자동 로그인 복구
-if st.session_state["credentials"] is None:
-    token, refresh = cookies.get("token"), cookies.get("refresh_token")
-    if token and refresh and token != "":
-        st.session_state["credentials"] = {
-            "token": token, "refresh_token": refresh,
-            "token_uri": "https://oauth2.googleapis.com/token",
-            "client_id": os.environ["GOOGLE_CLIENT_ID"], "client_secret": os.environ["GOOGLE_CLIENT_SECRET"],
-            "scopes": ["https://www.googleapis.com/auth/presentations", "https://www.googleapis.com/auth/drive", "https://www.googleapis.com/auth/userinfo.email"]
-        }
-        if validate_and_refresh_credentials():
-            st.session_state["user_email"] = get_user_info(Credentials(**st.session_state["credentials"]))
-        else: st.rerun()
 
 
 def upload_file_to_drive(uploaded_file, folder_id, creds):
@@ -440,9 +429,24 @@ else:
             auth_url, _ = flow.authorization_url(access_type="offline", prompt="consent")
             st.markdown(f'<a href="{auth_url}" target="_self" style="text-decoration:none;"><div style="background-color:white; color:#757575; border-radius:4px; border:1px solid #dadce0; padding:10px; text-align:center; font-weight:500; cursor:pointer;">Google 로그인</div></a>', unsafe_allow_html=True)
         else:
-            st.success(f"{st.session_state.get('user_email')}님")
+            st.success(
+                f"{st.session_state.get('user_name') or st.session_state.get('user_email')}님"
+            )
+            st.divider(); st.header("폴더 바로 가기")
+            st.link_button(
+                "악보 콘티 폴더",
+                SHEET_FOLDER_URL,
+                use_container_width=True
+            )
+
+            st.link_button(
+                "가사 콘티 폴더",
+                LYRICS_FOLDER_URL,
+                use_container_width=True
+            )
             if st.button("로그아웃"): logout(); st.rerun()
 
+        
         st.divider(); st.header("콘티 리스트")
         if st.session_state["cart"]:
             fname = st.text_input("파일명", value=f"콘티_{datetime.datetime.now().strftime('%y%m%d')}")
