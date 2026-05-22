@@ -309,38 +309,32 @@ def merge_and_upload_ppt(cart_items, filename):
             result = response.json()
 
             if not result.get("success"):
-
                 st.error(result.get("error"))
                 return
 
-            presentation_id = result["presentation_id"]
+            original_presentation_id = result["presentation_id"]
 
-            # 1. 원하는 폴더로 이동 (현재 부모 폴더 찾기)
-            # [수정] get 요청에도 supportsAllDrives=True 가 있어야 기존 폴더 위치를 파악할 수 있습니다.
-            file = drive_service.files().get(
-                fileId=presentation_id,
-                fields="parents",
+            # [수정] 이동(update) 대신 복사(copy)를 사용하여 소유권/권한 문제 우회
+            copied_file = drive_service.files().copy(
+                fileId=original_presentation_id,
+                body={
+                    "name": filename,
+                    "parents": [LYRICS_FOLDER_ID]
+                },
                 supportsAllDrives=True
             ).execute()
 
-            parents = file.get("parents", [])
-            previous_parents = ",".join(parents)
-            
-            update_kwargs = {
-                "fileId": presentation_id,
-                "addParents": LYRICS_FOLDER_ID,
-                "fields": "id, parents",
-                "supportsAllDrives": True
-            }
-            
-            # 기존 부모가 확인되면 반드시 removeParents에 넣어 교체(이동)하도록 합니다.
-            if previous_parents:
-                update_kwargs["removeParents"] = previous_parents
-            
-            # 2. 파일 위치 업데이트
-            drive_service.files().update(
-                **update_kwargs
-            ).execute()
+            # 복사된 새 파일의 ID를 사용
+            presentation_id = copied_file["id"]
+
+            # Apps Script가 만든 원본 파일 삭제 시도 (타 계정이라 권한이 없으면 조용히 무시)
+            try:
+                drive_service.files().delete(
+                    fileId=original_presentation_id,
+                    supportsAllDrives=True
+                ).execute()
+            except Exception:
+                pass
 
             final_url = (
                 f"https://docs.google.com/presentation/d/"
