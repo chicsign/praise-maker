@@ -315,10 +315,12 @@ def merge_and_upload_ppt(cart_items, filename):
 
             presentation_id = result["presentation_id"]
 
-            # 원하는 폴더로 이동
+            # 1. 원하는 폴더로 이동 (현재 부모 폴더 찾기)
+            # [수정] get 요청에도 supportsAllDrives=True 가 있어야 기존 폴더 위치를 파악할 수 있습니다.
             file = drive_service.files().get(
                 fileId=presentation_id,
-                fields="parents"
+                fields="parents",
+                supportsAllDrives=True
             ).execute()
 
             parents = file.get("parents", [])
@@ -327,15 +329,17 @@ def merge_and_upload_ppt(cart_items, filename):
             update_kwargs = {
                 "fileId": presentation_id,
                 "addParents": LYRICS_FOLDER_ID,
-                "fields": "id, parents"
+                "fields": "id, parents",
+                "supportsAllDrives": True
             }
             
+            # 기존 부모가 확인되면 반드시 removeParents에 넣어 교체(이동)하도록 합니다.
             if previous_parents:
                 update_kwargs["removeParents"] = previous_parents
             
+            # 2. 파일 위치 업데이트
             drive_service.files().update(
-                **update_kwargs,
-                supportsAllDrives=True
+                **update_kwargs
             ).execute()
 
             final_url = (
