@@ -321,15 +321,20 @@ def merge_and_upload_ppt(cart_items, filename):
                 fields="parents"
             ).execute()
 
-            previous_parents = ",".join(
-                file.get("parents", [])
-            )
-
+            parents = file.get("parents", [])
+            previous_parents = ",".join(parents)
+            
+            update_kwargs = {
+                "fileId": presentation_id,
+                "addParents": LYRICS_FOLDER_ID,
+                "fields": "id, parents"
+            }
+            
+            if previous_parents:
+                update_kwargs["removeParents"] = previous_parents
+            
             drive_service.files().update(
-                fileId=presentation_id,
-                addParents=LYRICS_FOLDER_ID,
-                removeParents=previous_parents,
-                fields="id, parents"
+                **update_kwargs
             ).execute()
 
             final_url = (
