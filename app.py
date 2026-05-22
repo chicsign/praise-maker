@@ -334,7 +334,8 @@ def merge_and_upload_ppt(cart_items, filename):
                 update_kwargs["removeParents"] = previous_parents
             
             drive_service.files().update(
-                **update_kwargs
+                **update_kwargs,
+                supportsAllDrives=True
             ).execute()
 
             final_url = (
