@@ -410,11 +410,22 @@ else:
                     c1, c2, c3, c4 = st.columns([4,1,1,1])
                     sel_key = item.get("selected_key", "C")
                     c1.write(f"**{idx+1}. {item['title']} ({sel_key})**")
+                    
+                    # ▲ 위로 이동 버튼 로직
                     if c2.button("▲", key=f"up_{idx}") and idx > 0:
-                        st.session_state["cart"][idx], st.session_state["cart"][idx-1] = st.session_state["cart"][idx-1], st.session_state["cart"][idx]; st.rerun()
-                    if c3.button("▼", key=f"dn_{idx}") and idx < len(st.session_state["cart"])-1:
-                        st.session_state["cart"][idx], st.session_state["cart"][idx-1] = st.session_state["cart"][idx-1], st.session_state["cart"][idx]; st.rerun()
-                    if c4.button("X", key=f"rm_{idx}"): st.session_state["cart"].pop(idx); st.rerun()
+                        st.session_state["cart"][idx], st.session_state["cart"][idx-1] = st.session_state["cart"][idx-1], st.session_state["cart"][idx]
+                        st.rerun()
+                        
+                    # ▼ 아래로 이동 버튼 로직 (안정적인 구조로 교정)
+                    if c3.button("▼", key=f"dn_{idx}") and idx < len(st.session_state["cart"]) - 1:
+                        # 안전한 스왑을 위해 가독성 있는 한 줄로 합치거나 임시 변수 처리
+                        st.session_state["cart"][idx], st.session_state["cart"][idx+1] = st.session_state["cart"][idx+1], st.session_state["cart"][idx]
+                        st.rerun()
+                        
+                    # X 제거 버튼 로직
+                    if c4.button("X", key=f"rm_{idx}"): 
+                        st.session_state["cart"].pop(idx)
+                        st.rerun()
                     
                     if "is_full_page" not in item: item["is_full_page"] = False
                     item["is_full_page"] = st.checkbox("전체 페이지 V", value=item["is_full_page"], key=f"full_chk_{idx}")
