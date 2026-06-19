@@ -9,9 +9,6 @@ import platform
 import requests
 from copy import deepcopy
 
-from pptx import Presentation
-from pptx.util import Inches
-
 from services.firebase_service import db, bucket
 from services.google_slides_service import create_flow, create_praise_slides
 
@@ -299,35 +296,31 @@ def show_add_edit_page(mode="add"):
         st.divider()
         if st.form_submit_button("저장하기", type="primary", use_container_width=True):
             if title:
-                # [수정] 수정 모드에서 아무 변경 사항도 없을 때 즉시 리턴시키는 체크 로직 추가
                 if mode == "edit":
                     current_tags = [t.strip() for t in tags_input.split(",")] if tags_input else []
                     origin_tags = song.get("tags", [])
                     
-                    # 텍스트 정보 필드 비교
                     is_same_text = (
                         title == song.get("title", "") and
                         youtube_url == song.get("youtube_url", "") and
                         current_tags == origin_tags
                     )
                     
-                    # Key 구성 및 이미지 변화 감지
                     is_same_keys = True
                     origin_keys = song.get("keys", {})
                     if set(st.session_state["temp_keys"].keys()) != set(origin_keys.keys()):
                         is_same_keys = False
                     else:
                         for k, v in st.session_state["temp_keys"].items():
-                            if v.get("temp_img_file") is not None: # 새 파일이 대기 중이면 무조건 변경된 것
+                            if v.get("temp_img_file") is not None:
                                 is_same_keys = False
                                 break
                     
-                    # 텍스트, 파일 업로드, 코드 블록이 모두 기존과 정확히 같다면 차단 처리
                     if is_same_text and is_same_keys and (common_ppt_up is None):
                         st.info("변경 사항이 없습니다.")
                         st.session_state.update({"page": "main", "editing_song": None, "temp_keys": None})
                         import time
-                        time.sleep(1) # 유저가 메시지를 인지할 수 있는 최소 시간 부여
+                        time.sleep(1)
                         st.rerun()
 
                 valid_check = True
@@ -418,7 +411,7 @@ else:
                     if c2.button("▲", key=f"up_{idx}") and idx > 0:
                         st.session_state["cart"][idx], st.session_state["cart"][idx-1] = st.session_state["cart"][idx-1], st.session_state["cart"][idx]; st.rerun()
                     if c3.button("▼", key=f"dn_{idx}") and idx < len(st.session_state["cart"])-1:
-                        st.session_state["cart"][idx], st.session_state["cart"][idx+1] = st.session_state["cart"][idx+1], st.session_state["cart"][idx]; st.rerun()
+                        st.session_state["cart"][idx], st.session_state["cart"][idx-1] = st.session_state["cart"][idx-1], st.session_state["cart"][idx]; st.rerun()
                     if c4.button("X", key=f"rm_{idx}"): st.session_state["cart"].pop(idx); st.rerun()
                     
                     if "is_full_page" not in item: item["is_full_page"] = False
