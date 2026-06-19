@@ -525,10 +525,40 @@ else:
         
     q = st.text_input("검색", placeholder="제목, 태그, Key 검색", label_visibility="collapsed").strip().lower()
     
-    docs = db.collection("songs").order_by("created_at", direction="DESCENDING").limit(50).stream()
+    docs = db.collection("songs").order_by("created_at", direction="DESCENDING").stream()
+    
+    # 먼저 검색 조건에 맞는 데이터를 리스트로 채집합니다.
+    filtered_songs = []
     for doc in docs:
         s = doc.to_dict() | {"id": doc.id}
         if not q or q in s['title'].lower() or any(q in t.lower() for t in s.get('tags', [])) or q in s.get('start_key', '').lower():
+            filtered_songs.append(s)
+            
+    # 페이징 설정
+    ITEMS_PER_PAGE = 10  # 한 페이지에 보여줄 찬양곡 개수
+    total_items = len(filtered_songs)
+    
+    if total_items == 0:
+        st.info("검색 결과가 없거나 등록된 찬양곡이 없습니다.")
+    else:
+        # 총 페이지 수 계산
+        total_pages = max(1, (total_items - 1) // ITEMS_PER_PAGE + 1)
+        
+        # 세션 상태로 현재 페이지 번호 관리
+        if "current_page" not in st.session_state:
+            st.session_state["current_page"] = 1
+            
+        # 페이지 범위 이탈 방지 예외 처리
+        if st.session_state["current_page"] > total_pages:
+            st.session_state["current_page"] = total_pages
+
+        # 현재 페이지에 해당하는 데이터만 슬라이싱
+        start_idx = (st.session_state["current_page"] - 1) * ITEMS_PER_PAGE
+        end_idx = start_idx + ITEMS_PER_PAGE
+        page_items = filtered_songs[start_idx:end_idx]
+        
+        # 곡 목록 렌더링
+        for s in page_items:
             with st.container(border=True):
                 h1, h2, h3 = st.columns([8,1,1])
                 h1.markdown(f"### {s['title']} ({s.get('start_key','C')})")
@@ -544,7 +574,23 @@ else:
                     l1.markdown(f'<a href="{s["youtube_url"]}" target="_blank" style="display:flex;align-items:center;justify-content:center;background-color:#F0F2F6;color:#262730;padding:5px 10px;border-radius:5px;text-decoration:none;font-size:13px;border:1px solid #E6E9EF;gap:5px;"><img src="https://upload.wikimedia.org/wikipedia/commons/e/ef/Youtube_logo.png" width="18">YouTube</a>', unsafe_allow_html=True)
                 if s.get("image_url"): l2.markdown(f'<a href="{s["image_url"]}" target="_blank" style="display:flex;align-items:center;justify-content:center;background-color:#F0F2F6;color:#262730;padding:5px 10px;border-radius:5px;text-decoration:none;font-size:13px;border:1px solid #E6E9EF;">악보 이미지</a>', unsafe_allow_html=True)
                 if s.get("ppt_drive_url"):
-                    l3.markdown(
-                        f'<a href="{s["ppt_drive_url"]}" target="_blank" style="display:flex;align-items:center;justify-content:center;background-color:#F0F2F6;color:#262730;padding:5px 10px;border-radius:5px;text-decoration:none;font-size:13px;border:1px solid #E6E9EF;">가사 PPT</a>',
-                        unsafe_allow_html=True
-                    )
+                    l3.markdown(f'<a href="{s["ppt_drive_url"]}" target="_blank" style="display:flex;align-items:center;justify-content:center;background-color:#F0F2F6;color:#262730;padding:5px 10px;border-radius:5px;text-decoration:none;font-size:13px;border:1px solid #E6E9EF;">가사 PPT</a>', unsafe_allow_html=True)
+        
+        # ---------------------------------------------------------
+        # [수정] 2. 하단 페이징 네비게이션 컨트롤러 추가
+        # ---------------------------------------------------------
+        st.divider()
+        p_col1, p_col2, p_col3 = st.columns([1, 3, 1])
+        
+        with p_col1:
+            if st.button("◀ 이전", disabled=(st.session_state["current_page"] == 1), use_container_width=True):
+                st.session_state["current_page"] -= 1
+                st.rerun()
+                
+        with p_col2:
+            st.markdown(f"<p style='text-align: center;'><b>{st.session_state['current_page']}</b> / {total_pages} 페이지 (총 {total_items}곡)</p>", unsafe_allow_html=True)
+            
+        with p_col3:
+            if st.button("다음 ▶", disabled=(st.session_state["current_page"] == total_pages), use_container_width=True):
+                st.session_state["current_page"] += 1
+                st.rerun()
