@@ -298,8 +298,13 @@ def show_add_edit_page(mode="add"):
         st.divider()
         if st.form_submit_button("저장하기", type="primary", use_container_width=True):
             if title:
-                # [수정] 3, 4번 요구사항: 저장 전 새로 추가된 키 블록에 악보 이미지가 누락되었는지 무결성 검증 수행
+                # 가사 PPT 필수 체크 예외처리
                 valid_check = True
+                
+                if mode == "add" and not common_ppt_up:
+                    st.error("🚨 신곡 등록 시 가사 PPT 파일은 필수 항목입니다. PPT를 추가해 주세요.")
+                    valid_check = False
+                    
                 for k_code, k_data in st.session_state["temp_keys"].items():
                     # 기존 업로드 이력(image_url)과 신규 업로드 대기 파일(temp_img_file)이 둘 다 모두 없다면 위반됨
                     if not k_data.get("image_url") and not k_data.get("temp_img_file"):
