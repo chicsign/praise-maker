@@ -247,7 +247,8 @@ def show_add_edit_page(mode="add"):
             existing_keys = {}
         st.session_state["temp_keys"] = deepcopy(existing_keys)
 
-    with st.form("song_form", clear_on_submit=True):
+    # [수정] clear_on_submit=True 가 있으면 제출 시 데이터가 초기화되어 데이터 비교문 및 if title 구문을 건너뛰고 튕기므로 False로 교정
+    with st.form("song_form", clear_on_submit=False):
         title = st.text_input("곡 이름 *", value=song.get("title", ""))
         youtube_url = st.text_input("YouTube 링크", value=song.get("youtube_url", ""))
         tags_input = st.text_input("태그 (쉼표 구분)", value=", ".join(song.get("tags", [])) if song.get("tags") else "")
@@ -333,6 +334,7 @@ def show_add_edit_page(mode="add"):
                     valid_check = False
                     
                 for k_code, k_data in st.session_state["temp_keys"].items():
+                    # [수정] 무결성 검증 수정: 기존 image_url이 있거나 새 업로드 파일이 있는 정상 블록은 유효성 체크 패스
                     if not k_data.get("image_url") and not k_data.get("temp_img_file"):
                         st.error(f"🚨 [{k_code} 코드] 블록에 악보 이미지가 누락되었습니다. 악보를 추가해 주세요.")
                         valid_check = False
