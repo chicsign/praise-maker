@@ -100,13 +100,16 @@ def validate_and_refresh_credentials():
     if not creds_data: return False
     try:
         creds = Credentials(**creds_data)
-        if creds.expired and creds.refresh_token:
-            creds.refresh(Request())
-            st.session_state["credentials"] = {
-                "token": creds.token, "refresh_token": creds.refresh_token,
-                "token_uri": creds.token_uri, "client_id": creds.client_id,
-                "client_secret": creds.client_secret, "scopes": creds.scopes
-            }
+        if creds.expired or (creds.valid == False):
+            if creds.refresh_token:
+                creds.refresh(Request())
+                st.session_state["credentials"] = {
+                    "token": creds.token, "refresh_token": creds.refresh_token,
+                    "token_uri": creds.token_uri, "client_id": creds.client_id,
+                    "client_secret": creds.client_secret, "scopes": creds.scopes
+                }
+            else:
+                return False
         return True
     except Exception as e:
         st.error(str(e))
@@ -197,7 +200,6 @@ def merge_and_upload_ppt(cart_items, filename):
             slide_ids = []
 
             for item in cart_items:
-                # [수정] 어떤 키를 선택했든 가사는 똑같으므로 최상위 공통 가사 PPT ID를 가져옴
                 slide_file_id = item.get("ppt_drive_file_id", "")
                 if not slide_file_id: continue
                 slide_ids.append(slide_file_id)
@@ -245,7 +247,7 @@ def show_add_edit_page(mode="add"):
         if mode == "edit" and not existing_keys and song.get("start_key"):
             existing_keys = {song["start_key"]: {"image_url": ""}}
         if not existing_keys:
-            existing_keys = {"C": {"image_url": ""}}
+            existing_keys = {}
         st.session_state["temp_keys"] = deepcopy(existing_keys)
 
     with st.form("song_form", clear_on_submit=True):
@@ -253,7 +255,6 @@ def show_add_edit_page(mode="add"):
         youtube_url = st.text_input("YouTube 링크", value=song.get("youtube_url", ""))
         tags_input = st.text_input("태그 (쉼표 구분)", value=", ".join(song.get("tags", [])) if song.get("tags") else "")
         
-        # [수정] 가사 PPT 업로더를 공통 영역으로 이동 (Key와 무관하게 딱 하나만 관리)
         common_ppt_up = st.file_uploader("📝 공통 가사 PPT (모든 Key 공통 사용)", type=["ppt","pptx"])
         if song.get("ppt_drive_url"):
             st.caption("✅ 이미 등록된 공통 가사 PPT가 존재합니다.")
@@ -298,15 +299,47 @@ def show_add_edit_page(mode="add"):
         st.divider()
         if st.form_submit_button("저장하기", type="primary", use_container_width=True):
             if title:
-                # 가사 PPT 필수 체크 예외처리
+                # [수정] 수정 모드에서 아무 변경 사항도 없을 때 즉시 리턴시키는 체크 로직 추가
+                if mode == "edit":
+                    current_tags = [t.strip() for t in tags_input.split(",")] if tags_input else []
+                    origin_tags = song.get("tags", [])
+                    
+                    # 텍스트 정보 필드 비교
+                    is_same_text = (
+                        title == song.get("title", "") and
+                        youtube_url == song.get("youtube_url", "") and
+                        current_tags == origin_tags
+                    )
+                    
+                    # Key 구성 및 이미지 변화 감지
+                    is_same_keys = True
+                    origin_keys = song.get("keys", {})
+                    if set(st.session_state["temp_keys"].keys()) != set(origin_keys.keys()):
+                        is_same_keys = False
+                    else:
+                        for k, v in st.session_state["temp_keys"].items():
+                            if v.get("temp_img_file") is not None: # 새 파일이 대기 중이면 무조건 변경된 것
+                                is_same_keys = False
+                                break
+                    
+                    # 텍스트, 파일 업로드, 코드 블록이 모두 기존과 정확히 같다면 차단 처리
+                    if is_same_text and is_same_keys and (common_ppt_up is None):
+                        st.info("변경 사항이 없습니다.")
+                        st.session_state.update({"page": "main", "editing_song": None, "temp_keys": None})
+                        import time
+                        time.sleep(1) # 유저가 메시지를 인지할 수 있는 최소 시간 부여
+                        st.rerun()
+
                 valid_check = True
-                
                 if mode == "add" and not common_ppt_up:
                     st.error("🚨 신곡 등록 시 가사 PPT 파일은 필수 항목입니다. PPT를 추가해 주세요.")
                     valid_check = False
                     
+                if not st.session_state["temp_keys"]:
+                    st.error("🚨 최소 한 개 이상의 Key 코드를 추가하고 악보 이미지를 업로드해 주세요.")
+                    valid_check = False
+                    
                 for k_code, k_data in st.session_state["temp_keys"].items():
-                    # 기존 업로드 이력(image_url)과 신규 업로드 대기 파일(temp_img_file)이 둘 다 모두 없다면 위반됨
                     if not k_data.get("image_url") and not k_data.get("temp_img_file"):
                         st.error(f"🚨 [{k_code} 코드] 블록에 악보 이미지가 누락되었습니다. 악보를 추가해 주세요.")
                         valid_check = False
@@ -317,7 +350,6 @@ def show_add_edit_page(mode="add"):
                             final_keys = deepcopy(st.session_state["temp_keys"])
                             creds = Credentials(**st.session_state["credentials"]) if st.session_state["credentials"] else None
 
-                            # [수정] 공통 가사 PPT 파일이 업로드되었다면 처리
                             common_ppt_id = song.get("ppt_drive_file_id", "")
                             common_ppt_url = song.get("ppt_drive_url", "")
                             if common_ppt_up:
@@ -360,7 +392,7 @@ if st.session_state["page"] == "add_song": show_add_edit_page("add")
 elif st.session_state["page"] == "edit_song": show_add_edit_page("edit")
 else:
     if st.session_state["credentials"]:
-        if not validate_and_refresh_credentials(): st.rerun()
+        validate_and_refresh_credentials()
             
     with st.sidebar:
         st.header("계정")
