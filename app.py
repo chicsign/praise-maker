@@ -54,7 +54,8 @@ session_keys = {
     "cart": [],
     "editing_song": None,
     "slide_url": None,
-    "ppt_slide_url": None
+    "ppt_slide_url": None,
+    "current_page": 1
 }
 
 for key, default in session_keys.items():
@@ -64,11 +65,12 @@ for key, default in session_keys.items():
 # -------------------------------
 # 다이얼로그 및 인증 관련 함수
 # -------------------------------
-@st.dialog("곡 삭제 확인")
+@st.dialog("곡 전체 삭제 확인")
 def delete_confirm_dialog(song_id, title):
-    st.write(f"'{title}' 곡을 삭제하시겠습니까?")
+    st.write(f"'{title}' 찬양곡 전체를 삭제하시겠습니까?")
+    st.caption("⚠️ 주의: 이 곡에 등록된 모든 코드(Key)의 악보와 PPT 정보가 DB에서 완전히 삭제됩니다.")
     c1, c2 = st.columns(2)
-    if c1.button("삭제", type="primary", use_container_width=True):
+    if c1.button("🚨 예, 전체 삭제합니다", type="primary", use_container_width=True):
         db.collection("songs").document(song_id).delete()
         st.rerun()
     if c2.button("취소", use_container_width=True): st.rerun()
@@ -250,7 +252,7 @@ def download_drive_file(file_id, output_path, creds):
 def save_playlist_to_firebase(filename, cart_items, file_url):
     try:
         db.collection("playlists").add({
-            "title": filename, "items": [{"id": item["id"], "title": item["title"]} for item in cart_items],
+            "title": filename, "items": [{"id": item["id"], "title": item["title"], "selected_key": item.get("selected_key", "C")} for item in cart_items],
             "file_url": file_url, "user_email": st.session_state.get("user_email"), "created_at": datetime.datetime.now()
         })
     except Exception as e: st.error(f"콘티 저장 실패: {e}")
@@ -275,9 +277,12 @@ def merge_and_upload_ppt(cart_items, filename):
 
             for item in cart_items:
 
-                slide_file_id = item.get(
-                    "ppt_drive_file_id"
-                )
+                sel_key = item.get("selected_key", "C")
+                slide_file_id = ""
+                if "keys" in item and sel_key in item["keys"]:
+                    slide_file_id = item["keys"][sel_key].get("ppt_drive_file_id", "")
+                else:
+                    slide_file_id = item.get("ppt_drive_file_id")
 
                 if not slide_file_id:
                     continue
@@ -360,67 +365,119 @@ def merge_and_upload_ppt(cart_items, filename):
 def show_add_edit_page(mode="add"):
     st.title("찬양곡 추가" if mode == "add" else "찬양곡 수정")
     song = st.session_state.get("editing_song", {}) if mode == "edit" else {}
-    if st.button("돌아가기"): st.session_state.update({"page": "main", "editing_song": None}); st.rerun()
+    if st.button("돌아가기"): st.session_state.update({"page": "main", "editing_song": None, "temp_keys": None}); st.rerun()
+
+    # 다중 키 세션을 컴포넌트 내부에서 임시 관리
+    if "temp_keys" not in st.session_state or st.session_state["temp_keys"] is None:
+        existing_keys = song.get("keys", {})
+        if mode == "edit" and not existing_keys and song.get("start_key"):
+            existing_keys = {
+                song["start_key"]: {
+                    "image_url": song.get("image_url", ""),
+                    "ppt_drive_file_id": song.get("ppt_drive_file_id", ""),
+                    "ppt_drive_url": song.get("ppt_drive_url", ""),
+                    "ppt_ext": song.get("ppt_ext", ".pptx")
+                }
+            }
+        if not existing_keys:
+            existing_keys = {"C": {"image_url": "", "ppt_drive_file_id": "", "ppt_drive_url": "", "ppt_ext": ".pptx"}}
+        st.session_state["temp_keys"] = deepcopy(existing_keys)
 
     with st.form("song_form", clear_on_submit=True):
-        col1, col2 = st.columns([2, 1])
-        title = col1.text_input("곡 이름 *", value=song.get("title", ""))
-        with col2:
-            st.write("Key")
-            k_col1, k_col2, k_col3 = st.columns([2, 1, 1])
-            s_key = song.get("start_key", "C")
-            base_key = k_col1.selectbox("Key", ["C","D","E","F","G","A","B"], index=["C","D","E","F","G","A","B"].index(s_key[0] if s_key else "C"), label_visibility="collapsed")
-            is_sharp, is_flat = k_col2.checkbox("#", value="#" in s_key), k_col3.checkbox("b", value="b" in s_key)
-        
-        start_key = base_key + ("#" if is_sharp else "b" if is_flat else "")
+        title = st.text_input("곡 이름 *", value=song.get("title", ""))
         youtube_url = st.text_input("YouTube 링크", value=song.get("youtube_url", ""))
         tags_input = st.text_input("태그 (쉼표 구분)", value=", ".join(song.get("tags", [])) if song.get("tags") else "")
         
-        c3, c4 = st.columns(2)
-        image_file = c3.file_uploader("악보 이미지", type=["jpg","png","jpeg"], key="img_up")
-        ppt_file = c4.file_uploader("가사 PPT", type=["ppt","pptx"], key="ppt_up")
+        st.divider()
+        st.subheader("등록된 Key별 파일 목록")
+        st.caption("💡 찬양곡에 필요한 여러 Key들의 악보와 가사를 한 번에 관리하세요.")
 
+        # 등록된 키 파일 렌더링 및 수정 폼 내 개별 키 세트 삭제 UI 구현
+        keys_to_delete = []
+        for k_code, k_data in list(st.session_state["temp_keys"].items()):
+            with st.container(border=True):
+                ck1, ck2, ck3 = st.columns([1, 2, 1])
+                ck1.markdown(f"### Key: `{k_code}`")
+                
+                # 특정 키 삭제 기능 (수정 화면 등에서 해당 코드만 부분 삭제)
+                if ck3.form_submit_button(f"🗑️ {k_code}코드 삭제", use_container_width=True):
+                    keys_to_delete.append(k_code)
+
+                img_up = ck2.file_uploader(f"[{k_code}] 악보 이미지", type=["jpg","png","jpeg"], key=f"img_up_{k_code}")
+                ppt_up = ck2.file_uploader(f"[{k_code}] 가사 PPT", type=["ppt","pptx"], key=f"ppt_up_{k_code}")
+                
+                if img_up: k_data["temp_img_file"] = img_up
+                if ppt_up: k_data["temp_ppt_file"] = ppt_up
+
+                if k_data.get("image_url"): ck2.caption(f"✅ 기존 악보 존재함")
+                if k_data.get("ppt_drive_url"): ck2.caption(f"✅ 기존 가사 PPT 존재함")
+
+        for tk in keys_to_delete:
+            if len(st.session_state["temp_keys"]) > 1:
+                del st.session_state["temp_keys"][tk]
+                st.rerun()
+            else:
+                st.error("최소 한 개 이상의 Key 블록이 존재해야 합니다.")
+
+        st.divider()
+        st.write("➕ 새로운 Key(코드) 추가하기")
+        ak1, ak2, ak3, ak4 = st.columns([2, 1, 1, 2])
+        base_key = ak1.selectbox("추가할 Key", ["C","D","E","F","G","A","B"], label_visibility="collapsed", key="add_base_key")
+        is_sharp, is_flat = ak2.checkbox("#", key="add_sharp"), ak3.checkbox("b", key="add_flat")
+        new_k_code = base_key + ("#" if is_sharp else "b" if is_flat else "")
+        
+        if ak4.form_submit_button("코드 블록 추가", type="secondary", use_container_width=True):
+            if new_k_code not in st.session_state["temp_keys"]:
+                st.session_state["temp_keys"][new_k_code] = {"image_url": "", "ppt_drive_file_id": "", "ppt_drive_url": "", "ppt_ext": ".pptx"}
+                st.rerun()
+            else:
+                st.warning("이미 추가된 코드입니다.")
+
+        st.divider()
         if st.form_submit_button("저장하기", type="primary", use_container_width=True):
             if title:
                 with st.spinner("저장 중..."):
                     try:
+                        final_keys = deepcopy(st.session_state["temp_keys"])
+                        creds = Credentials(**st.session_state["credentials"]) if st.session_state["credentials"] else None
+
+                        for k_code, k_data in final_keys.items():
+                            if "temp_img_file" in k_data and k_data["temp_img_file"]:
+                                img_f = k_data["temp_img_file"]
+                                blob = bucket.blob(f"songs/images/{datetime.datetime.now().strftime('%H%M%S')}_{img_f.name}")
+                                blob.upload_from_file(img_f, content_type=img_f.type); blob.make_public()
+                                k_data["image_url"] = blob.public_url
+                                del k_data["temp_img_file"]
+
+                            if "temp_ppt_file" in k_data and k_data["temp_ppt_file"]:
+                                ppt_f = k_data["temp_ppt_file"]
+                                uploaded = upload_file_to_drive(ppt_f, PPT_FOLDER_ID, creds)
+                                k_data["ppt_drive_file_id"] = uploaded["file_id"]
+                                k_data["ppt_drive_url"] = uploaded["view_link"]
+                                k_data["ppt_ext"] = os.path.splitext(ppt_f.name)[1].lower()
+                                del k_data["temp_ppt_file"]
+
+                        first_key = list(final_keys.keys())[0]
                         data = {
                             "title": title,
-                            "start_key": start_key,
                             "youtube_url": youtube_url,
                             "tags": [t.strip() for t in tags_input.split(",")] if tags_input else [],
                             "updated_at": datetime.datetime.now(),
-                            "image_url": song.get("image_url", ""),
-                            "ppt_drive_file_id": song.get("ppt_drive_file_id", ""),
-                            "ppt_drive_url": song.get("ppt_drive_url", ""),
-                             "ppt_ext": song.get("ppt_ext", ".pptx")
+                            "keys": final_keys,
+                            "start_key": first_key,
+                            "image_url": final_keys[first_key]["image_url"],
+                            "ppt_drive_file_id": final_keys[first_key]["ppt_drive_file_id"],
+                            "ppt_drive_url": final_keys[first_key]["ppt_drive_url"]
                         }
-                        if image_file:
-                            blob = bucket.blob(f"songs/images/{datetime.datetime.now().strftime('%H%M%S')}_{image_file.name}")
-                            blob.upload_from_file(image_file, content_type=image_file.type); blob.make_public(); data["image_url"] = blob.public_url
-                        if ppt_file:
 
-                            creds = Credentials(
-                                **st.session_state["credentials"]
-                            )
-
-                            uploaded = upload_file_to_drive(
-                                ppt_file,
-                                PPT_FOLDER_ID,
-                                creds
-                            )
-
-                            data["ppt_drive_file_id"] = uploaded["file_id"]
-                            data["ppt_drive_url"] = uploaded["view_link"]
-                            data["ppt_ext"] = os.path.splitext(ppt_file.name)[1].lower()
-                        
                         if mode == "add":
                             data["created_at"] = datetime.datetime.now()
                             db.collection("songs").add(data)
-
                         else:
                             db.collection("songs").document(song["id"]).update(data)
-                        st.success("저장 완료"); st.session_state.update({"page": "main", "editing_song": None}); st.rerun()
+
+                        st.session_state.update({"page": "main", "editing_song": None, "temp_keys": None})
+                        st.success("저장 완료"); st.rerun()
                     except Exception as e: st.error(f"저장 실패: {e}")
 
 if st.session_state["page"] == "add_song": show_add_edit_page("add")
@@ -461,13 +518,18 @@ else:
             fname = st.text_input("파일명", value=f"콘티_{datetime.datetime.now().strftime('%y%m%d')}")
             for idx, item in enumerate(st.session_state["cart"]):
                 with st.container(border=True):
-                    c1, c2, c3, c4 = st.columns([5,1,1,1])
-                    c1.write(f"**{idx+1}. {item['title']}**")
+                    c1, c2, c3, c4 = st.columns([4,1,1,1])
+                    sel_key = item.get("selected_key", "C")
+                    c1.write(f"**{idx+1}. {item['title']} ({sel_key})**")
                     if c2.button("▲", key=f"up_{idx}") and idx > 0:
                         st.session_state["cart"][idx], st.session_state["cart"][idx-1] = st.session_state["cart"][idx-1], st.session_state["cart"][idx]; st.rerun()
                     if c3.button("▼", key=f"dn_{idx}") and idx < len(st.session_state["cart"])-1:
                         st.session_state["cart"][idx], st.session_state["cart"][idx+1] = st.session_state["cart"][idx+1], st.session_state["cart"][idx]; st.rerun()
                     if c4.button("X", key=f"rm_{idx}"): st.session_state["cart"].pop(idx); st.rerun()
+                    
+                    if "is_full_page" not in item:
+                        item["is_full_page"] = False
+                    item["is_full_page"] = st.checkbox("전체 페이지 V", value=item["is_full_page"], key=f"full_chk_{idx}")
             
             st.divider(); st.subheader("슬라이드 제작")
             if st.button("악보 PPT 생성", type="primary", use_container_width=True):
@@ -506,17 +568,17 @@ else:
                         if song_ref.exists:
                             song_data = song_ref.to_dict()
                             song_data["id"] = s_item["id"]
-                            if not any(i["id"] == song_data["id"] for i in st.session_state["cart"]):
+                            song_data["selected_key"] = s_item.get("selected_key", "C")
+                            if not any(i["id"] == song_data["id"] and i.get("selected_key") == song_data["selected_key"] for i in st.session_state["cart"]):
                                 new_items.append(song_data)
                         else:
                             missing_songs.append(s_item["title"])
                     st.session_state["cart"].extend(new_items)
                     if missing_songs: st.warning(f"DB에서 삭제된 곡 제외: {', '.join(missing_songs)}")
                     st.rerun()
-
                 if st.button("기록 삭제", key=f"hist_del_{h_id}", use_container_width=True):
                     delete_history_dialog(h_id, h['title'])
-                for s in h.get("items", []): st.write(f"- {s['title']}")
+                for s in h.get("items", []): st.write(f"- {s['title']} ({s.get('selected_key', 'C')})")
 
     t1, t2 = st.columns([5,1])
     t1.title("Praise Maker")
@@ -561,36 +623,67 @@ else:
         for s in page_items:
             with st.container(border=True):
                 h1, h2, h3 = st.columns([8,1,1])
-                h1.markdown(f"### {s['title']} ({s.get('start_key','C')})")
+                h1.markdown(f"### {s['title']}")
                 if h2.button("수정", key=f"edit_{s['id']}"):
                     st.session_state.update({"editing_song": s, "page": "edit_song"}); st.rerun()
-                if h3.button("삭제", key=f"del_{s['id']}"): delete_confirm_dialog(s['id'], s['title'])
+                if h3.button("🗑️ 곡 전체 삭제", key=f"del_{s['id']}"): delete_confirm_dialog(s['id'], s['title'])
                 if s.get("tags"): st.markdown(" ".join([f"`#{tag}`" for tag in s["tags"]]))
-                if st.button("콘티 리스트에 담기", key=f"add_{s['id']}", use_container_width=True, type="primary"):
-                    if s['id'] not in [item['id'] for item in st.session_state["cart"]]:
-                        st.session_state["cart"].append(s); st.rerun()
+                
+                available_keys = list(s.get("keys", {}).keys())
+                if not available_keys and s.get("start_key"):
+                    available_keys = [s["start_key"]]
+                if not available_keys:
+                    available_keys = ["C"]
+
+                # 사용 가능한 키를 한눈에 보여주는 시각적 뱃지 노출
+                st.markdown("**보유 중인 Key:** " + " ".join([f"`{k}`" for k in available_keys]))
+
+                k_select_col, btn_add_col = st.columns([2, 8])
+                chosen_key = k_select_col.selectbox("코드 선택", available_keys, key=f"sel_k_{s['id']}", label_visibility="collapsed")
+
+                if btn_add_col.button(f"[{chosen_key} 코드] 콘티 리스트에 담기", key=f"add_{s['id']}", use_container_width=True, type="primary"):
+                    if not any(item['id'] == s['id'] and item.get('selected_key') == chosen_key for item in st.session_state["cart"]):
+                        song_to_cart = deepcopy(s)
+                        song_to_cart["selected_key"] = chosen_key
+                        st.session_state["cart"].append(song_to_cart)
+                        st.rerun()
                 l1, l2, l3 = st.columns(3)
                 if s.get("youtube_url"):
                     l1.markdown(f'<a href="{s["youtube_url"]}" target="_blank" style="display:flex;align-items:center;justify-content:center;background-color:#F0F2F6;color:#262730;padding:5px 10px;border-radius:5px;text-decoration:none;font-size:13px;border:1px solid #E6E9EF;gap:5px;"><img src="https://upload.wikimedia.org/wikipedia/commons/e/ef/Youtube_logo.png" width="18">YouTube</a>', unsafe_allow_html=True)
-                if s.get("image_url"): l2.markdown(f'<a href="{s["image_url"]}" target="_blank" style="display:flex;align-items:center;justify-content:center;background-color:#F0F2F6;color:#262730;padding:5px 10px;border-radius:5px;text-decoration:none;font-size:13px;border:1px solid #E6E9EF;">악보 이미지</a>', unsafe_allow_html=True)
-                if s.get("ppt_drive_url"):
-                    l3.markdown(f'<a href="{s["ppt_drive_url"]}" target="_blank" style="display:flex;align-items:center;justify-content:center;background-color:#F0F2F6;color:#262730;padding:5px 10px;border-radius:5px;text-decoration:none;font-size:13px;border:1px solid #E6E9EF;">가사 PPT</a>', unsafe_allow_html=True)
+                
+                tgt_img, tgt_ppt = s.get("image_url", ""), s.get("ppt_drive_url", "")
+                if "keys" in s and chosen_key in s["keys"]:
+                    tgt_img = s["keys"][chosen_key].get("image_url", tgt_img)
+                    tgt_ppt = s["keys"][chosen_key].get("ppt_drive_url", tgt_ppt)
+
+                if tgt_img: l2.markdown(f'<a href="{tgt_img}" target="_blank" style="display:flex;align-items:center;justify-content:center;background-color:#F0F2F6;color:#262730;padding:5px 10px;border-radius:5px;text-decoration:none;font-size:13px;border:1px solid #E6E9EF;">악보 이미지 ({chosen_key})</a>', unsafe_allow_html=True)
+                if tgt_ppt: l3.markdown(f'<a href="{tgt_ppt}" target="_blank" style="display:flex;align-items:center;justify-content:center;background-color:#F0F2F6;color:#262730;padding:5px 10px;border-radius:5px;text-decoration:none;font-size:13px;border:1px solid #E6E9EF;">가사 PPT ({chosen_key})</a>', unsafe_allow_html=True)
         
         # ---------------------------------------------------------
-        # [수정] 2. 하단 페이징 네비게이션 컨트롤러 추가
+        # [수정] 하단 페이징 네비게이션 컨트롤러 추가 (처음, 끝 이동 포함 5열 구조)
         # ---------------------------------------------------------
         st.divider()
-        p_col1, p_col2, p_col3 = st.columns([1, 3, 1])
+        p_col_first, p_col_prev, p_col_text, p_col_next, p_col_last = st.columns([0.7, 0.7, 3, 0.7, 0.7])
         
-        with p_col1:
+        with p_col_first:
+            if st.button("◀◀ 처음", disabled=(st.session_state["current_page"] == 1), use_container_width=True):
+                st.session_state["current_page"] = 1
+                st.rerun()
+
+        with p_col_prev:
             if st.button("◀ 이전", disabled=(st.session_state["current_page"] == 1), use_container_width=True):
                 st.session_state["current_page"] -= 1
                 st.rerun()
                 
-        with p_col2:
-            st.markdown(f"<p style='text-align: center;'><b>{st.session_state['current_page']}</b> / {total_pages} 페이지 (총 {total_items}곡)</p>", unsafe_allow_html=True)
+        with p_col_text:
+            st.markdown(f"<p style='text-align: center; margin-top: 5px;'><b>{st.session_state['current_page']}</b> / {total_pages} 페이지 (총 {total_items}곡)</p>", unsafe_allow_html=True)
             
-        with p_col3:
+        with p_col_next:
             if st.button("다음 ▶", disabled=(st.session_state["current_page"] == total_pages), use_container_width=True):
                 st.session_state["current_page"] += 1
+                st.rerun()
+
+        with p_col_last:
+            if st.button("끝 ▶▶", disabled=(st.session_state["current_page"] == total_pages), use_container_width=True):
+                st.session_state["current_page"] = total_pages
                 st.rerun()
