@@ -70,18 +70,99 @@ def create_praise_slides(cart_items, file_name, creds, folder_id, show_title_tex
 
     requests = []
     image_number = 1
+    
+    # -------------------------------------------------------------
+    # [기능 고도화] 수동 배치(is_full_page) 값에 따른 유연한 슬라이더 생성 루프
+    # -------------------------------------------------------------
+    processed_items = 0
+    total_items = len(cart_items)
+    insertion_index = 0
 
-    for i in range(0, len(cart_items), 2):
-        page_id = f"page_{i}_{datetime.datetime.now().microsecond}"
+    while processed_items < total_items:
+        item = cart_items[processed_items]
+        page_id = f"page_{processed_items}_{datetime.datetime.now().microsecond}"
+        
+        # 새 슬라이드 한 장 추가
         requests.append({
             "createSlide": {
                 "objectId": page_id,
-                "insertionIndex": str(i // 2),
+                "insertionIndex": str(insertion_index),
                 "slideLayoutReference": {"predefinedLayout": "BLANK"}
             }
         })
+        insertion_index += 1
 
-        if i == 0 and show_title_text:
+        # 16:9 와이드 프레젠테이션 기본 해상도 크기 기준 정렬 (가로 약 720 PT x 세로 405 PT)
+        # 만약 사용자가 '전체 페이지 V' 체크박스를 선택했다면 단독으로 1페이지 전체(가로 꽉 차게) 할당
+        if item.get("is_full_page", False):
+            # 악보 이미지 배치 (전체 화면 가로 배치형)
+            if item.get("image_url"):
+                requests.append({
+                    "createImage": {
+                        "url": item["image_url"],
+                        "elementProperties": {
+                            "pageObjectId": page_id,
+                            "size": {"width": {"magnitude": 720, "unit": "PT"}, "height": {"magnitude": 405, "unit": "PT"}},
+                            "transform": {"scaleX": 1, "scaleY": 1, "translateX": 0, "translateY": 0, "unit": "PT"}
+                        }
+                    }
+                })
+                
+                # 순서 넘버링 박스 레이아웃 지정
+                label_id = f"label_{image_number}"
+                requests.append({"createShape": {"objectId": label_id, "shapeType": "TEXT_BOX", "elementProperties": {"pageObjectId": page_id, "size": {"width": {"magnitude": 30, "unit": "PT"}, "height": {"magnitude": 30, "unit": "PT"}}, "transform": {"scaleX": 1, "scaleY": 1, "translateX": 10, "translateY": 25, "unit": "PT"}}}})
+                requests.append({"insertText": {"objectId": label_id, "text": str(image_number)}})
+                requests.append({"updateTextStyle": {"objectId": label_id, "style": {"fontSize": {"magnitude": 18, "unit": "PT"}, "bold": True}, "textRange": {"type": "ALL"}, "fields": "fontSize,bold"}})
+                image_number += 1
+                
+            processed_items += 1  # 1개 곡만 처리하고 다음 페이지 분기로 이동
+        
+        # 체크박스가 선택되지 않았다면 기존처럼 가로폭 절반 크기로 2개씩 분할 정렬
+        else:
+            # 1. 왼쪽 이미지 배치
+            if item.get("image_url"):
+                requests.append({
+                    "createImage": {
+                        "url": item["image_url"],
+                        "elementProperties": {
+                            "pageObjectId": page_id,
+                            "size": {"width": {"magnitude": 360, "unit": "PT"}, "height": {"magnitude": 405, "unit": "PT"}},
+                            "transform": {"scaleX": 1, "scaleY": 1, "translateX": 0, "translateY": 0, "unit": "PT"}
+                        }
+                    }
+                })
+                left_label_id = f"left_label_{image_number}"
+                requests.append({"createShape": {"objectId": left_label_id, "shapeType": "TEXT_BOX", "elementProperties": {"pageObjectId": page_id, "size": {"width": {"magnitude": 30, "unit": "PT"}, "height": {"magnitude": 30, "unit": "PT"}}, "transform": {"scaleX": 1, "scaleY": 1, "translateX": 10, "translateY": 25, "unit": "PT"}}}})
+                requests.append({"insertText": {"objectId": left_label_id, "text": str(image_number)}})
+                requests.append({"updateTextStyle": {"objectId": left_label_id, "style": {"fontSize": {"magnitude": 18, "unit": "PT"}, "bold": True}, "textRange": {"type": "ALL"}, "fields": "fontSize,bold"}})
+                image_number += 1
+
+            # 2. 다음 곡 항목을 검사하여 우측 분할 영역에 채워 넣을 수 있는지 체크 (우측 곡도 반 페이지 세팅이어야 함)
+            if processed_items + 1 < total_items and not cart_items[processed_items + 1].get("is_full_page", False):
+                next_item = cart_items[processed_items + 1]
+                if next_item.get("image_url"):
+                    requests.append({
+                        "createImage": {
+                            "url": next_item["image_url"],
+                            "elementProperties": {
+                                "pageObjectId": page_id,
+                                "size": {"width": {"magnitude": 360, "unit": "PT"}, "height": {"magnitude": 405, "unit": "PT"}},
+                                "transform": {"scaleX": 1, "scaleY": 1, "translateX": 360, "translateY": 0, "unit": "PT"}
+                            }
+                        }
+                    })
+                    right_label_id = f"right_label_{image_number}"
+                    requests.append({"createShape": {"objectId": right_label_id, "shapeType": "TEXT_BOX", "elementProperties": {"pageObjectId": page_id, "size": {"width": {"magnitude": 30, "unit": "PT"}, "height": {"magnitude": 30, "unit": "PT"}}, "transform": {"scaleX": 1, "scaleY": 1, "translateX": 370, "translateY": 25, "unit": "PT"}}}})
+                    requests.append({"insertText": {"objectId": right_label_id, "text": str(image_number)}})
+                    requests.append({"updateTextStyle": {"objectId": right_label_id, "style": {"fontSize": {"magnitude": 18, "unit": "PT"}, "bold": True}, "textRange": {"type": "ALL"}, "fields": "fontSize,bold"}})
+                    image_number += 1
+                processed_items += 2  # 양쪽 2개 아이템 세트 동시 차감 처리
+            else:
+                processed_items += 1  # 우측에 놓을 곡이 없거나 다음 곡이 전체 화면 배치형이면 1개만 소모 후 마감
+
+        # [버그 수정 완료] 이미지 개체 생성이 완전히 끝난 후(가장 아래쪽 레이어), 
+        # 맨 마지막에 텍스트 상자 생성 명령을 누적하여 Z-Index상 텍스트가 항상 이미지 위(앞)에 오도록 수정
+        if processed_items - (2 if not item.get("is_full_page", False) and processed_items % 2 == 0 else 1) == 0 and show_title_text:
             title_box_id = f"title_box_{datetime.datetime.now().microsecond}"
             requests.append({
                 "createShape": {
@@ -96,42 +177,6 @@ def create_praise_slides(cart_items, file_name, creds, folder_id, show_title_tex
             requests.append({"insertText": {"objectId": title_box_id, "text": file_name}})
             requests.append({"updateTextStyle": {"objectId": title_box_id, "style": {"fontSize": {"magnitude": 10, "unit": "PT"}, "bold": True}, "textRange": {"type": "ALL"}, "fields": "fontSize,bold"}})
             requests.append({"updateParagraphStyle": {"objectId": title_box_id, "style": {"alignment": "CENTER"}, "textRange": {"type": "ALL"}, "fields": "alignment"}})
-
-        # 왼쪽 이미지 배치
-        if cart_items[i].get("image_url"):
-            requests.append({
-                "createImage": {
-                    "url": cart_items[i]["image_url"],
-                    "elementProperties": {
-                        "pageObjectId": page_id,
-                        "size": {"width": {"magnitude": 360, "unit": "PT"}, "height": {"magnitude": 405, "unit": "PT"}},
-                        "transform": {"scaleX": 1, "scaleY": 1, "translateX": 0, "translateY": 0, "unit": "PT"}
-                    }
-                }
-            })
-            left_label_id = f"left_label_{image_number}"
-            requests.append({"createShape": {"objectId": left_label_id, "shapeType": "TEXT_BOX", "elementProperties": {"pageObjectId": page_id, "size": {"width": {"magnitude": 30, "unit": "PT"}, "height": {"magnitude": 30, "unit": "PT"}}, "transform": {"scaleX": 1, "scaleY": 1, "translateX": 10, "translateY": 25, "unit": "PT"}}}})
-            requests.append({"insertText": {"objectId": left_label_id, "text": str(image_number)}})
-            requests.append({"updateTextStyle": {"objectId": left_label_id, "style": {"fontSize": {"magnitude": 18, "unit": "PT"}, "bold": True}, "textRange": {"type": "ALL"}, "fields": "fontSize,bold"}})
-            image_number += 1
-
-        # 오른쪽 이미지 배치
-        if i + 1 < len(cart_items) and cart_items[i + 1].get("image_url"):
-            requests.append({
-                "createImage": {
-                    "url": cart_items[i + 1]["image_url"],
-                    "elementProperties": {
-                        "pageObjectId": page_id,
-                        "size": {"width": {"magnitude": 360, "unit": "PT"}, "height": {"magnitude": 405, "unit": "PT"}},
-                        "transform": {"scaleX": 1, "scaleY": 1, "translateX": 360, "translateY": 0, "unit": "PT"}
-                    }
-                }
-            })
-            right_label_id = f"right_label_{image_number}"
-            requests.append({"createShape": {"objectId": right_label_id, "shapeType": "TEXT_BOX", "elementProperties": {"pageObjectId": page_id, "size": {"width": {"magnitude": 30, "unit": "PT"}, "height": {"magnitude": 30, "unit": "PT"}}, "transform": {"scaleX": 1, "scaleY": 1, "translateX": 370, "translateY": 25, "unit": "PT"}}}})
-            requests.append({"insertText": {"objectId": right_label_id, "text": str(image_number)}})
-            requests.append({"updateTextStyle": {"objectId": right_label_id, "style": {"fontSize": {"magnitude": 18, "unit": "PT"}, "bold": True}, "textRange": {"type": "ALL"}, "fields": "fontSize,bold"}})
-            image_number += 1
 
     # [수정] 모든 페이지 생성이 끝난 후, 맨 처음에 있던 자동 생성 슬라이드 삭제
     requests.append({"deleteObject": {"objectId": first_slide_id}})
