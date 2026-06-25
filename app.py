@@ -354,36 +354,33 @@ def show_add_edit_page(mode="add"):
                                 common_ppt_id = uploaded["file_id"]
                                 common_ppt_url = uploaded["view_link"]
 
-                            # --- 이 부분(실제 파일 업로드 처리 루프)을 찾아 교체하세요 ---
                             for k_code, k_data in final_keys.items():
                                 if "temp_img_file" in k_data and k_data["temp_img_file"]:
                                     img_f = k_data["temp_img_file"]
                                     
-                                    # [구글 슬라이드 크기 제한 방어] 업로드 전 PIL(Pillow) 라이브러리로 이미지 압축 및 최적화
+                                    # [구글 슬라이드 크기 제한 & 포맷 에러 완벽 방어] 
                                     from PIL import Image
                                     import io
                                     
-                                    # 1. 파일 데이터를 이미지 객체로 변환
-                                    image = Image.open(img_f)
+                                    # 1. 파일 바이트를 안전하게 복사하여 이미지 객체로 로드
+                                    img_bytes = img_f.getbuffer()
+                                    image = Image.open(io.BytesIO(img_bytes))
                                     
-                                    # 2. 만약 해상도가 너무 크면 max_size(2500px) 기준으로 비율 유지하며 리사이징
-                                    # (구글 슬라이드 400 에러를 원천 차단하는 핵심 코드입니다)
+                                    # 2. 악보 이미지의 특성(단색, 인덱스 모드 등)으로 인한 포맷 충돌을 막기 위해 확실하게 풀 RGB로 컨버트
+                                    if image.mode != "RGB":
+                                        image = image.convert("RGB")
+                                    
+                                    # 3. 해상도가 구글 슬라이드 규격을 넘지 않도록 최대 2500px 규격으로 축소
                                     image.thumbnail((2500, 2500), Image.Resampling.LANCZOS)
                                     
-                                    # 3. 압축된 이미지를 메모리 바이트 스트림으로 변환
+                                    # 4. 메모리 스트림에 순정 표준 JPEG 바이너리로 저장
                                     compressed_img_io = io.BytesIO()
-                                    img_format = img_f.type.split('/')[-1].upper()
-                                    if img_format == "JPEG": img_format = "JPEG"
-                                    elif img_format == "PNG": img_format = "PNG"
-                                    else: img_format = "JPEG" # 기본값 예외 방어
-                                    
-                                    # 퀄리티를 85% 수준으로 압축 (용량은 1/5로 줄어들지만 육안상 화질 저하 없음)
-                                    image.save(compressed_img_io, format=img_format, quality=85)
+                                    image.save(compressed_img_io, format="JPEG", quality=85)
                                     compressed_img_io.seek(0)
                                     
-                                    # 4. 파이어베이스 스토리지에 압축된 데이터 업로드
+                                    # 5. 파이어베이스 스토리지에 업로드 (MIME 타입을 image/jpeg로 완전 고정)
                                     blob = bucket.blob(f"songs/images/{datetime.datetime.now().strftime('%H%M%S')}_{img_f.name}")
-                                    blob.upload_from_file(compressed_img_io, content_type=img_f.type)
+                                    blob.upload_from_file(compressed_img_io, content_type="image/jpeg")
                                     blob.make_public()
                                     
                                     k_data["image_url"] = blob.public_url
