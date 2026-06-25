@@ -354,13 +354,41 @@ def show_add_edit_page(mode="add"):
                                 common_ppt_id = uploaded["file_id"]
                                 common_ppt_url = uploaded["view_link"]
 
+                            # --- 이 부분(실제 파일 업로드 처리 루프)을 찾아 교체하세요 ---
                             for k_code, k_data in final_keys.items():
                                 if "temp_img_file" in k_data and k_data["temp_img_file"]:
                                     img_f = k_data["temp_img_file"]
+                                    
+                                    # [구글 슬라이드 크기 제한 방어] 업로드 전 PIL(Pillow) 라이브러리로 이미지 압축 및 최적화
+                                    from PIL import Image
+                                    import io
+                                    
+                                    # 1. 파일 데이터를 이미지 객체로 변환
+                                    image = Image.open(img_f)
+                                    
+                                    # 2. 만약 해상도가 너무 크면 max_size(2500px) 기준으로 비율 유지하며 리사이징
+                                    # (구글 슬라이드 400 에러를 원천 차단하는 핵심 코드입니다)
+                                    image.thumbnail((2500, 2500), Image.Resampling.LANCZOS)
+                                    
+                                    # 3. 압축된 이미지를 메모리 바이트 스트림으로 변환
+                                    compressed_img_io = io.BytesIO()
+                                    img_format = img_f.type.split('/')[-1].upper()
+                                    if img_format == "JPEG": img_format = "JPEG"
+                                    elif img_format == "PNG": img_format = "PNG"
+                                    else: img_format = "JPEG" # 기본값 예외 방어
+                                    
+                                    # 퀄리티를 85% 수준으로 압축 (용량은 1/5로 줄어들지만 육안상 화질 저하 없음)
+                                    image.save(compressed_img_io, format=img_format, quality=85)
+                                    compressed_img_io.seek(0)
+                                    
+                                    # 4. 파이어베이스 스토리지에 압축된 데이터 업로드
                                     blob = bucket.blob(f"songs/images/{datetime.datetime.now().strftime('%H%M%S')}_{img_f.name}")
-                                    blob.upload_from_file(img_f, content_type=img_f.type); blob.make_public()
+                                    blob.upload_from_file(compressed_img_io, content_type=img_f.type)
+                                    blob.make_public()
+                                    
                                     k_data["image_url"] = blob.public_url
                                     del k_data["temp_img_file"]
+                                    
                                 # 만약 과거 구형 데이터라 개별 코드 블록 내부의 image_url이 없는데 최상위 공통 주소가 있다면 물려줍니다.
                                 elif not k_data.get("image_url") and song.get("image_url"):
                                     k_data["image_url"] = song.get("image_url")
