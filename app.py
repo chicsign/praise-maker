@@ -334,8 +334,10 @@ def show_add_edit_page(mode="add"):
                     valid_check = False
                     
                 for k_code, k_data in st.session_state["temp_keys"].items():
-                    # [수정] 무결성 검증 수정: 기존 image_url이 있거나 새 업로드 파일이 있는 정상 블록은 유효성 체크 패스
-                    if not k_data.get("image_url") and not k_data.get("temp_img_file"):
+                    # [⚠️ 과거 데이터 호환 버그 교정 핵심] 
+                    # 개별 Key 블록에 image_url이 없더라도 최상위 song 문서에 공통 image_url이 남아있다면 악보가 유효한 것으로 처리합니다.
+                    has_any_sheet = bool(k_data.get("image_url")) or bool(k_data.get("temp_img_file")) or bool(song.get("image_url"))
+                    if not has_any_sheet:
                         st.error(f"🚨 [{k_code} 코드] 블록에 악보 이미지가 누락되었습니다. 악보를 추가해 주세요.")
                         valid_check = False
                 
@@ -359,6 +361,9 @@ def show_add_edit_page(mode="add"):
                                     blob.upload_from_file(img_f, content_type=img_f.type); blob.make_public()
                                     k_data["image_url"] = blob.public_url
                                     del k_data["temp_img_file"]
+                                # 만약 과거 구형 데이터라 개별 코드 블록 내부의 image_url이 없는데 최상위 공통 주소가 있다면 물려줍니다.
+                                elif not k_data.get("image_url") and song.get("image_url"):
+                                    k_data["image_url"] = song.get("image_url")
 
                             first_key = list(final_keys.keys())[0]
                             data = {
@@ -418,7 +423,6 @@ else:
                         
                     # ▼ 아래로 이동 버튼 로직 (안정적인 구조로 교정)
                     if c3.button("▼", key=f"dn_{idx}") and idx < len(st.session_state["cart"]) - 1:
-                        # 안전한 스왑을 위해 가독성 있는 한 줄로 합치거나 임시 변수 처리
                         st.session_state["cart"][idx], st.session_state["cart"][idx+1] = st.session_state["cart"][idx+1], st.session_state["cart"][idx]
                         st.rerun()
                         
