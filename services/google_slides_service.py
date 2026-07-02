@@ -95,28 +95,28 @@ def create_praise_slides(cart_items, file_name, creds, folder_id, show_title_tex
        # 16:9 와이드 프레젠테이션 기본 해상도 크기 기준 정렬 (가로 약 720 PT x 세로 405 PT)
         # 만약 사용자가 '전체 페이지 V' 체크박스를 선택했다면 단독으로 1페이지 전체(가로 꽉 차게) 할당
         if item.get("is_full_page", False):
-            # 악보 이미지 배치 (왼쪽으로 90도 회전 및 화면에 빈틈없이 꽉 채우기)
+            # 악보 이미지 배치 (왼쪽으로 90도 회전, 세로 405PT 기준 비율 유지, 왼쪽 하단 정렬)
             if item.get("image_url"):
                 requests.append({
                     "createImage": {
                         "url": item["image_url"],
                         "elementProperties": {
                             "pageObjectId": page_id,
-                            # 구글의 가로/세로 오토 스케일을 방어하기 위해 슬라이드 전체 규격 지정
+                            # [💡 핵심 교정] 비율이 깨지지 않도록 하기 위해 구글 슬라이드 크기 자체를 
+                            # 회전 후 세로 높이가 될 405 PT를 기준으로 정사각형(405x405)으로 임시 제한합니다.
+                            # 이렇게 해야 구글 엔진이 원본 비율을 깨지 않고 순수하게 90도만 돌려줍니다.
                             "size": {
-                                "width": {"magnitude": 720, "unit": "PT"}, 
+                                "width": {"magnitude": 405, "unit": "PT"}, 
                                 "height": {"magnitude": 405, "unit": "PT"}
                             },
-                            # [🔥 수학적 정밀 보정] 
-                            # 왼쪽으로 90도 회전 행렬: [cos(-90) -sin(-90) tx] / [sin(-90) cos(-90) ty]
-                            # = [0  1  tx] / [-1  0  ty]
-                            # 여기에 16:9 해상도 비율(720/405)에 맞춘 왜곡 방지 스케일 보정값을 적용합니다.
+                            # 순수 왼쪽 90도 회전 및 왼쪽 하단 원점 정렬 행렬
+                            # 돌린 후 슬라이드 왼쪽 하단에 딱 붙도록 translateX를 높이만큼(405) 밀어줍니다.
                             "transform": {
                                 "scaleX": 0.0,
                                 "scaleY": 0.0,
-                                "shearX": 1.7778,  # 가로 꽉 차게 늘려주는 스케일 보정 (720/405)
-                                "shearY": -0.5625, # 세로 꽉 차게 늘려주는 스케일 보정 (405/720)
-                                "translateX": 720,  # 회전축 기준점 보정 (가로폭만큼 우측 이동)
+                                "shearX": 1.0,   # 가로 비율 왜곡 제거 (순수 1:1 회전축 유지)
+                                "shearY": -1.0,  # 세로 비율 왜곡 제거 (순수 1:1 회전축 유지)
+                                "translateX": 405, # 오른쪽 상단으로 튕기지 않고 왼쪽 하단 기준점에 안착하도록 보정
                                 "translateY": 0,
                                 "unit": "PT"
                             }
