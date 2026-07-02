@@ -469,13 +469,17 @@ else:
                         st.rerun()
             
             if st.session_state.get("slide_url"):
-                st.link_button("악보 열기", st.session_state["slide_url"], use_container_width=True)
+                with st.container(border=True):
+                    st.link_button("악보 열기", st.session_state["slide_url"], use_container_width=True)
+                    st.link_button("📂 악보 폴더 열기", SHEET_FOLDER_URL, use_container_width=True)
             st.divider()
             if st.button("가사 PPT 생성", use_container_width=True):
                 if validate_and_refresh_credentials(): merge_and_upload_ppt(st.session_state["cart"], fname)
             
             if st.session_state.get("ppt_slide_url"):
-                st.link_button("가사 열기", st.session_state["ppt_slide_url"], use_container_width=True)
+                with st.container(border=True):
+                    st.link_button("가사 열기", st.session_state["ppt_slide_url"], use_container_width=True)
+                    st.link_button("📂 가사 폴더 열기", LYRICS_FOLDER_URL, use_container_width=True)
 
             if st.button("전체 초기화", use_container_width=True):
                 st.session_state.update({"cart": [], "slide_url": None, "ppt_slide_url": None}); st.rerun()
