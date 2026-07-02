@@ -95,22 +95,59 @@ def create_praise_slides(cart_items, file_name, creds, folder_id, show_title_tex
         # 16:9 와이드 프레젠테이션 기본 해상도 크기 기준 정렬 (가로 약 720 PT x 세로 405 PT)
         # 만약 사용자가 '전체 페이지 V' 체크박스를 선택했다면 단독으로 1페이지 전체(가로 꽉 차게) 할당
         if item.get("is_full_page", False):
-            # 악보 이미지 배치 (전체 화면 가로 배치형)
+            # 악보 이미지 배치 (왼쪽으로 90도 회전 및 화면에 빈틈없이 꽉 채우기)
             if item.get("image_url"):
                 requests.append({
                     "createImage": {
                         "url": item["image_url"],
                         "elementProperties": {
                             "pageObjectId": page_id,
-                            "size": {"width": {"magnitude": 720, "unit": "PT"}, "height": {"magnitude": 405, "unit": "PT"}},
-                            "transform": {"scaleX": 1, "scaleY": 1, "translateX": 0, "translateY": 0, "unit": "PT"}
+                            # [💡 핵심 교정] 90도 회전할 것이므로 프레젠테이션의 가로/세로 길이를 교차해서 지정합니다.
+                            "size": {
+                                "width": {"magnitude": 405, "unit": "PT"}, 
+                                "height": {"magnitude": 720, "unit": "PT"}
+                            },
+                            # 왼쪽으로 90도 회전하는 아핀 변환 행렬 공식 적용 (cos -90=0, sin -90=-1)
+                            # 회전축 기준점 이동을 위해 가로폭(720)만큼 X축을 밀어줍니다.
+                            "transform": {
+                                "scaleX": 0.0,
+                                "scaleY": 1.0,
+                                "shearX": -1.0,
+                                "shearY": 0.0,
+                                "translateX": 720,
+                                "translateY": 0,
+                                "unit": "PT"
+                            }
                         }
                     }
                 })
                 
-                # 순서 넘버링 박스 레이아웃 지정
+                # 순서 넘버링 박스 레이아웃 지정 (왼쪽 하단에 안착 및 왼쪽으로 90도 회전)
                 label_id = f"label_{image_number}"
-                requests.append({"createShape": {"objectId": label_id, "shapeType": "TEXT_BOX", "elementProperties": {"pageObjectId": page_id, "size": {"width": {"magnitude": 30, "unit": "PT"}, "height": {"magnitude": 30, "unit": "PT"}}, "transform": {"scaleX": 1, "scaleY": 1, "translateX": 10, "translateY": 25, "unit": "PT"}}}})
+                requests.append({
+                    "createShape": {
+                        "objectId": label_id, 
+                        "shapeType": "TEXT_BOX", 
+                        "elementProperties": {
+                            "pageObjectId": page_id, 
+                            # 글자 박스도 회전 규격에 맞춰 폭과 높이를 스왑하여 설정합니다.
+                            "size": {
+                                "width": {"magnitude": 30, "unit": "PT"}, 
+                                "height": {"magnitude": 40, "unit": "PT"}
+                            }, 
+                            # 왼쪽 하단(가로 25 PT, 세로 380 PT 지점) 구석에 선 채로 90도 누워있도록 제어
+                            "transform": {
+                                "scaleX": 0.0,
+                                "scaleY": 1.0,
+                                "shearX": -1.0,
+                                "shearY": 0.0,
+                                "translateX": 25, 
+                                "translateY": 340, 
+                                "unit": "PT"
+                            }
+                        }
+                    }
+                })
                 requests.append({"insertText": {"objectId": label_id, "text": str(image_number)}})
                 requests.append({"updateTextStyle": {"objectId": label_id, "style": {"fontSize": {"magnitude": 18, "unit": "PT"}, "bold": True}, "textRange": {"type": "ALL"}, "fields": "fontSize,bold"}})
                 image_number += 1
