@@ -553,6 +553,15 @@ else:
                 if btn_add_col.button(f"[{chosen_key} 코드] 콘티 리스트에 담기", key=f"add_{s['id']}", use_container_width=True, type="primary"):
                     if not any(item['id'] == s['id'] and item.get('selected_key') == chosen_key for item in st.session_state["cart"]):
                         song_to_cart = deepcopy(s)
+                        
+                        # --- [🔥 핵심 수정: 선택된 코드에 맞는 이미지로 강제 오버라이드] ---
+                        # 사용자가 선택한 key(chosen_key) 안에 개별 image_url이 존재한다면 
+                        # 카트에 들어갈 복사본 데이터의 image_url을 해당 이미지로 정확하게 갱신해 줍니다.
+                        specific_image = s.get("keys", {}).get(chosen_key, {}).get("image_url")
+                        if specific_image:
+                            song_to_cart["image_url"] = specific_image
+                        # ------------------------------------------------------------------
+                        
                         song_to_cart["selected_key"] = chosen_key
                         st.session_state["cart"].append(song_to_cart)
                         st.rerun()
