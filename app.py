@@ -9,6 +9,7 @@ import platform
 import requests
 import difflib
 from copy import deepcopy
+from streamlit_cookies_manager import EncryptedCookieManager
 
 from services.firebase_service import db, bucket
 from services.google_slides_service import create_flow, create_praise_slides
@@ -29,6 +30,17 @@ st.set_page_config(
     page_title="Praise Maker",
     layout="wide"
 )
+
+# -------------------------------
+# 새로고침에도 로그인이 풀리지 않도록, 암호화된 쿠키에 로그인 정보를 보관
+# (COOKIES_PASSWORD 미설정 시 기본값으로 동작은 하지만 배포 환경에서는 반드시 별도 값으로 설정할 것)
+# -------------------------------
+cookies = EncryptedCookieManager(
+    prefix="praisemaker/",
+    password=os.environ.get("COOKIES_PASSWORD", "praise-maker-dev-only-change-me")
+)
+if not cookies.ready():
+    st.stop()
 
 # -------------------------------
 # [시스템 설정] 폴더 ID 및 URL
@@ -114,6 +126,55 @@ def duplicate_confirm_dialog(similar_songs, title, youtube_url, tags_input, comm
         do_save_song(title, youtube_url, tags_input, common_ppt_up, mode, song)
     if c2.button("취소", use_container_width=True): st.rerun()
 
+def save_credentials_to_cookie(creds_dict):
+    try:
+        cookies["refresh_token"] = creds_dict.get("refresh_token") or ""
+        cookies["token_uri"] = creds_dict.get("token_uri") or ""
+        cookies["client_id"] = creds_dict.get("client_id") or ""
+        cookies["client_secret"] = creds_dict.get("client_secret") or ""
+        cookies["scopes"] = ",".join(creds_dict.get("scopes") or [])
+        cookies.save()
+    except Exception:
+        pass
+
+def clear_credentials_cookie():
+    # 라이브러리의 del(쿠키 prefix 처리 버그)이 아닌, 빈 값으로 덮어써서 안전하게 제거합니다.
+    try:
+        for k in ["refresh_token", "token_uri", "client_id", "client_secret", "scopes"]:
+            cookies[k] = ""
+        cookies.save()
+    except Exception:
+        pass
+
+def restore_credentials_from_cookie():
+    refresh_token = cookies.get("refresh_token")
+    if not refresh_token: return False
+    try:
+        creds = Credentials(
+            token=None,
+            refresh_token=refresh_token,
+            token_uri=cookies.get("token_uri"),
+            client_id=cookies.get("client_id"),
+            client_secret=cookies.get("client_secret"),
+            scopes=cookies.get("scopes").split(",") if cookies.get("scopes") else None
+        )
+        creds.refresh(Request())
+        creds_dict = {
+            "token": creds.token, "refresh_token": creds.refresh_token,
+            "token_uri": creds.token_uri, "client_id": creds.client_id,
+            "client_secret": creds.client_secret, "scopes": creds.scopes
+        }
+        st.session_state["credentials"] = creds_dict
+
+        user_info = get_user_info(creds)
+        if user_info:
+            st.session_state["user_email"] = user_info.get("email")
+            st.session_state["user_name"] = user_info.get("name")
+        return True
+    except Exception:
+        clear_credentials_cookie()
+        return False
+
 def logout():
     st.session_state.update({
         "credentials": None,
@@ -123,6 +184,7 @@ def logout():
         "slide_url": None,
         "ppt_slide_url": None
     })
+    clear_credentials_cookie()
 
 def validate_and_refresh_credentials():
     creds_data = st.session_state.get("credentials")
@@ -137,6 +199,7 @@ def validate_and_refresh_credentials():
                     "token_uri": creds.token_uri, "client_id": creds.client_id,
                     "client_secret": creds.client_secret, "scopes": creds.scopes
                 }
+                save_credentials_to_cookie(st.session_state["credentials"])
             else:
                 return False
         return True
@@ -155,6 +218,10 @@ def get_user_info(creds):
         }
     except: return None
 
+# 새로고침 등으로 session_state가 비어도, 쿠키에 저장된 refresh_token으로 로그인을 복원합니다.
+if st.session_state["credentials"] is None and not st.query_params.get("code"):
+    restore_credentials_from_cookie()
+
 # --- OAuth 콜백 처리 ---
 if st.query_params.get("code") and st.session_state["credentials"] is None:
     try:
@@ -167,6 +234,7 @@ if st.query_params.get("code") and st.session_state["credentials"] is None:
             "client_secret": creds.client_secret, "scopes": creds.scopes
         }
         st.session_state["credentials"] = creds_dict
+        save_credentials_to_cookie(creds_dict)
         user_info = get_user_info(creds)
 
         if user_info:
