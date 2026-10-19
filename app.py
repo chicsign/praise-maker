@@ -134,8 +134,9 @@ def save_credentials_to_cookie(creds_dict):
         cookies["client_secret"] = creds_dict.get("client_secret") or ""
         cookies["scopes"] = ",".join(creds_dict.get("scopes") or [])
         cookies.save()
-    except Exception:
-        pass
+        print(f"[cookie-auth] saved. has_refresh_token={bool(creds_dict.get('refresh_token'))}")
+    except Exception as e:
+        print(f"[cookie-auth] save FAILED: {e!r}")
 
 def clear_credentials_cookie():
     # 라이브러리의 del(쿠키 prefix 처리 버그)이 아닌, 빈 값으로 덮어써서 안전하게 제거합니다.
@@ -143,11 +144,13 @@ def clear_credentials_cookie():
         for k in ["refresh_token", "token_uri", "client_id", "client_secret", "scopes"]:
             cookies[k] = ""
         cookies.save()
-    except Exception:
-        pass
+        print("[cookie-auth] cleared.")
+    except Exception as e:
+        print(f"[cookie-auth] clear FAILED: {e!r}")
 
 def restore_credentials_from_cookie():
     refresh_token = cookies.get("refresh_token")
+    print(f"[cookie-auth] restore attempt. cookie has refresh_token={bool(refresh_token)}")
     if not refresh_token: return False
     try:
         creds = Credentials(
@@ -170,8 +173,10 @@ def restore_credentials_from_cookie():
         if user_info:
             st.session_state["user_email"] = user_info.get("email")
             st.session_state["user_name"] = user_info.get("name")
+        print("[cookie-auth] restore SUCCESS")
         return True
-    except Exception:
+    except Exception as e:
+        print(f"[cookie-auth] restore FAILED: {e!r}")
         clear_credentials_cookie()
         return False
 
