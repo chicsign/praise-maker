@@ -7,6 +7,7 @@ import shutil
 import subprocess
 import platform
 import requests
+import difflib
 from copy import deepcopy
 
 from services.firebase_service import db, bucket
@@ -52,7 +53,8 @@ session_keys = {
     "editing_song": None,
     "slide_url": None,
     "ppt_slide_url": None,
-    "current_page": 1
+    "current_page": 1,
+    "song_cache": []
 }
 
 for key, default in session_keys.items():
@@ -80,6 +82,36 @@ def delete_history_dialog(doc_id, title):
     if c1.button("기록 삭제", type="primary", use_container_width=True):
         db.collection("playlists").document(doc_id).delete()
         st.rerun()
+    if c2.button("취소", use_container_width=True): st.rerun()
+
+def normalize_title(title):
+    return "".join(title.lower().split())
+
+def find_similar_songs(title, exclude_id=None, threshold=0.6):
+    # 추가 Firestore 조회 없이, 메인 목록 로드 시 캐싱해둔 song_cache만으로 유사 제목을 찾습니다.
+    norm_title = normalize_title(title)
+    if not norm_title: return []
+
+    similar = []
+    for s in st.session_state.get("song_cache", []):
+        if exclude_id and s.get("id") == exclude_id: continue
+        norm_other = normalize_title(s.get("title", ""))
+        if not norm_other: continue
+        is_substring = norm_title in norm_other or norm_other in norm_title
+        ratio = difflib.SequenceMatcher(None, norm_title, norm_other).ratio()
+        if is_substring or ratio >= threshold:
+            similar.append(s)
+    return similar
+
+@st.dialog("비슷한 곡 발견")
+def duplicate_confirm_dialog(similar_songs, title, youtube_url, tags_input, common_ppt_up, mode, song):
+    st.write(f"'{title}'와(과) 제목이 비슷한 곡이 이미 등록되어 있습니다.")
+    for s in similar_songs:
+        st.caption(f"- {s.get('title')} (`{s.get('start_key', 'C')}`)")
+    st.write("그래도 등록하시겠습니까?")
+    c1, c2 = st.columns(2)
+    if c1.button("예, 등록합니다", type="primary", use_container_width=True):
+        do_save_song(title, youtube_url, tags_input, common_ppt_up, mode, song)
     if c2.button("취소", use_container_width=True): st.rerun()
 
 def logout():
@@ -234,6 +266,78 @@ def merge_and_upload_ppt(cart_items, filename):
             st.success("가사 PPT 생성 완료")
     except Exception as e: st.error(f"오류: {e}")
 
+def do_save_song(title, youtube_url, tags_input, common_ppt_up, mode, song):
+    with st.spinner("저장 중..."):
+        try:
+            final_keys = deepcopy(st.session_state["temp_keys"])
+            creds = Credentials(**st.session_state["credentials"]) if st.session_state["credentials"] else None
+
+            common_ppt_id = song.get("ppt_drive_file_id", "")
+            common_ppt_url = song.get("ppt_drive_url", "")
+            if common_ppt_up:
+                uploaded = upload_file_to_drive(common_ppt_up, PPT_FOLDER_ID, creds)
+                common_ppt_id = uploaded["file_id"]
+                common_ppt_url = uploaded["view_link"]
+
+            for k_code, k_data in final_keys.items():
+                if "temp_img_file" in k_data and k_data["temp_img_file"]:
+                    img_f = k_data["temp_img_file"]
+
+                    # [구글 슬라이드 크기 제한 & 포맷 에러 완벽 방어]
+                    from PIL import Image
+                    import io
+
+                    # 1. 파일 바이트를 안전하게 복사하여 이미지 객체로 로드
+                    img_bytes = img_f.getbuffer()
+                    image = Image.open(io.BytesIO(img_bytes))
+
+                    # 2. 악보 이미지의 특성(단색, 인덱스 모드 등)으로 인한 포맷 충돌을 막기 위해 확실하게 풀 RGB로 컨버트
+                    if image.mode != "RGB":
+                        image = image.convert("RGB")
+
+                    # 3. 해상도가 구글 슬라이드 규격을 넘지 않도록 최대 2500px 규격으로 축소
+                    image.thumbnail((2500, 2500), Image.Resampling.LANCZOS)
+
+                    # 4. 메모리 스트림에 순정 표준 JPEG 바이너리로 저장
+                    compressed_img_io = io.BytesIO()
+                    image.save(compressed_img_io, format="JPEG", quality=85)
+                    compressed_img_io.seek(0)
+
+                    # 5. 파이어베이스 스토리지에 업로드 (MIME 타입을 image/jpeg로 완전 고정)
+                    blob = bucket.blob(f"songs/images/{datetime.datetime.now().strftime('%H%M%S')}_{img_f.name}")
+                    blob.upload_from_file(compressed_img_io, content_type="image/jpeg")
+                    blob.make_public()
+
+                    k_data["image_url"] = blob.public_url
+                    del k_data["temp_img_file"]
+
+                # 만약 과거 구형 데이터라 개별 코드 블록 내부의 image_url이 없는데 최상위 공통 주소가 있다면 물려줍니다.
+                elif not k_data.get("image_url") and song.get("image_url"):
+                    k_data["image_url"] = song.get("image_url")
+
+            first_key = list(final_keys.keys())[0]
+            data = {
+                "title": title,
+                "youtube_url": youtube_url,
+                "tags": [t.strip() for t in tags_input.split(",")] if tags_input else [],
+                "updated_at": datetime.datetime.now(),
+                "keys": final_keys,
+                "start_key": first_key,
+                "image_url": final_keys[first_key]["image_url"],
+                "ppt_drive_file_id": common_ppt_id,
+                "ppt_drive_url": common_ppt_url
+            }
+
+            if mode == "add":
+                data["created_at"] = datetime.datetime.now()
+                db.collection("songs").add(data)
+            else:
+                db.collection("songs").document(song["id"]).update(data)
+
+            st.session_state.update({"page": "main", "editing_song": None, "temp_keys": None})
+            st.success("저장 완료"); st.rerun()
+        except Exception as e: st.error(f"저장 실패: {e}")
+
 def show_add_edit_page(mode="add"):
     st.title("찬양곡 추가" if mode == "add" else "찬양곡 수정")
     song = st.session_state.get("editing_song", {}) if mode == "edit" else {}
@@ -342,76 +446,11 @@ def show_add_edit_page(mode="add"):
                         valid_check = False
                 
                 if valid_check:
-                    with st.spinner("저장 중..."):
-                        try:
-                            final_keys = deepcopy(st.session_state["temp_keys"])
-                            creds = Credentials(**st.session_state["credentials"]) if st.session_state["credentials"] else None
-
-                            common_ppt_id = song.get("ppt_drive_file_id", "")
-                            common_ppt_url = song.get("ppt_drive_url", "")
-                            if common_ppt_up:
-                                uploaded = upload_file_to_drive(common_ppt_up, PPT_FOLDER_ID, creds)
-                                common_ppt_id = uploaded["file_id"]
-                                common_ppt_url = uploaded["view_link"]
-
-                            for k_code, k_data in final_keys.items():
-                                if "temp_img_file" in k_data and k_data["temp_img_file"]:
-                                    img_f = k_data["temp_img_file"]
-                                    
-                                    # [구글 슬라이드 크기 제한 & 포맷 에러 완벽 방어] 
-                                    from PIL import Image
-                                    import io
-                                    
-                                    # 1. 파일 바이트를 안전하게 복사하여 이미지 객체로 로드
-                                    img_bytes = img_f.getbuffer()
-                                    image = Image.open(io.BytesIO(img_bytes))
-                                    
-                                    # 2. 악보 이미지의 특성(단색, 인덱스 모드 등)으로 인한 포맷 충돌을 막기 위해 확실하게 풀 RGB로 컨버트
-                                    if image.mode != "RGB":
-                                        image = image.convert("RGB")
-                                    
-                                    # 3. 해상도가 구글 슬라이드 규격을 넘지 않도록 최대 2500px 규격으로 축소
-                                    image.thumbnail((2500, 2500), Image.Resampling.LANCZOS)
-                                    
-                                    # 4. 메모리 스트림에 순정 표준 JPEG 바이너리로 저장
-                                    compressed_img_io = io.BytesIO()
-                                    image.save(compressed_img_io, format="JPEG", quality=85)
-                                    compressed_img_io.seek(0)
-                                    
-                                    # 5. 파이어베이스 스토리지에 업로드 (MIME 타입을 image/jpeg로 완전 고정)
-                                    blob = bucket.blob(f"songs/images/{datetime.datetime.now().strftime('%H%M%S')}_{img_f.name}")
-                                    blob.upload_from_file(compressed_img_io, content_type="image/jpeg")
-                                    blob.make_public()
-                                    
-                                    k_data["image_url"] = blob.public_url
-                                    del k_data["temp_img_file"]
-                                    
-                                # 만약 과거 구형 데이터라 개별 코드 블록 내부의 image_url이 없는데 최상위 공통 주소가 있다면 물려줍니다.
-                                elif not k_data.get("image_url") and song.get("image_url"):
-                                    k_data["image_url"] = song.get("image_url")
-
-                            first_key = list(final_keys.keys())[0]
-                            data = {
-                                "title": title,
-                                "youtube_url": youtube_url,
-                                "tags": [t.strip() for t in tags_input.split(",")] if tags_input else [],
-                                "updated_at": datetime.datetime.now(),
-                                "keys": final_keys,
-                                "start_key": first_key,
-                                "image_url": final_keys[first_key]["image_url"],
-                                "ppt_drive_file_id": common_ppt_id,
-                                "ppt_drive_url": common_ppt_url
-                            }
-
-                            if mode == "add":
-                                data["created_at"] = datetime.datetime.now()
-                                db.collection("songs").add(data)
-                            else:
-                                db.collection("songs").document(song["id"]).update(data)
-
-                            st.session_state.update({"page": "main", "editing_song": None, "temp_keys": None})
-                            st.success("저장 완료"); st.rerun()
-                        except Exception as e: st.error(f"저장 실패: {e}")
+                    similar_songs = find_similar_songs(title, exclude_id=song.get("id") if mode == "edit" else None)
+                    if similar_songs:
+                        duplicate_confirm_dialog(similar_songs, title, youtube_url, tags_input, common_ppt_up, mode, song)
+                    else:
+                        do_save_song(title, youtube_url, tags_input, common_ppt_up, mode, song)
 
 if st.session_state["page"] == "add_song": show_add_edit_page("add")
 elif st.session_state["page"] == "edit_song": show_add_edit_page("edit")
@@ -515,13 +554,16 @@ else:
         
     q = st.text_input("검색", placeholder="제목, 태그, Key 검색", label_visibility="collapsed").strip().lower()
     docs = db.collection("songs").order_by("created_at", direction="DESCENDING").stream()
-    
-    filtered_songs = []
-    for doc in docs:
-        s = doc.to_dict() | {"id": doc.id}
-        if not q or q in s['title'].lower() or any(q in t.lower() for t in s.get('tags', [])) or q in s.get('start_key', '').lower():
-            filtered_songs.append(s)
-            
+
+    all_songs = [doc.to_dict() | {"id": doc.id} for doc in docs]
+    # 추가/수정 페이지의 중복 곡 체크용으로 캐싱해, 거기서 별도 조회를 하지 않도록 합니다.
+    st.session_state["song_cache"] = all_songs
+
+    filtered_songs = [
+        s for s in all_songs
+        if not q or q in s['title'].lower() or any(q in t.lower() for t in s.get('tags', [])) or q in s.get('start_key', '').lower()
+    ]
+
     ITEMS_PER_PAGE = 10
     total_items = len(filtered_songs)
     
