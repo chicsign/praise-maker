@@ -659,22 +659,24 @@ else:
             fname = st.text_input("파일명", value=f"콘티_{datetime.datetime.now().strftime('%y%m%d')}")
             for idx, item in enumerate(st.session_state["cart"]):
                 with st.container(border=True, key=f"cart-item-{idx}", gap=None):
-                    c1, c2, c3, c4 = st.columns([4,1,1,1])
+                    # st.columns는 좁은 화면(모바일)에서 각 칸이 세로로 통째로 쌓여버리므로,
+                    # 폭에 상관없이 한 줄을 유지하는 horizontal 컨테이너를 사용합니다.
                     sel_key = item.get("selected_key", "C")
-                    c1.write(f"**{idx+1}. {item['title']} ({sel_key})**")
-                    
-                    # 위로 이동 버튼 로직
-                    if c2.button("", key=f"up_{idx}", icon=":material/arrow_upward:", help="위로 이동") and idx > 0:
+                    with st.container(horizontal=True, vertical_alignment="center", gap="small"):
+                        st.write(f"**{idx+1}. {item['title']} ({sel_key})**")
+                        up_clicked = st.button("", key=f"up_{idx}", icon=":material/arrow_upward:", help="위로 이동")
+                        dn_clicked = st.button("", key=f"dn_{idx}", icon=":material/arrow_downward:", help="아래로 이동")
+                        rm_clicked = st.button("", key=f"rm_{idx}", icon=":material/close:", help="목록에서 제거")
+
+                    if up_clicked and idx > 0:
                         st.session_state["cart"][idx], st.session_state["cart"][idx-1] = st.session_state["cart"][idx-1], st.session_state["cart"][idx]
                         st.rerun()
 
-                    # 아래로 이동 버튼 로직 (안정적인 구조로 교정)
-                    if c3.button("", key=f"dn_{idx}", icon=":material/arrow_downward:", help="아래로 이동") and idx < len(st.session_state["cart"]) - 1:
+                    if dn_clicked and idx < len(st.session_state["cart"]) - 1:
                         st.session_state["cart"][idx], st.session_state["cart"][idx+1] = st.session_state["cart"][idx+1], st.session_state["cart"][idx]
                         st.rerun()
 
-                    # 제거 버튼 로직
-                    if c4.button("", key=f"rm_{idx}", icon=":material/close:", help="목록에서 제거"):
+                    if rm_clicked:
                         st.session_state["cart"].pop(idx)
                         st.rerun()
 
@@ -762,21 +764,26 @@ else:
         
         def render_song_card(s):
             with st.container(border=True, key=f"song-card-{s['id']}", gap=None):
-                # 유튜브 유무와 상관없이 항상 같은 칸 구성을 써서, 카드마다 수정/삭제 위치가
-                # 흔들리지 않도록 합니다. 유튜브 아이콘은 제목 바로 오른쪽(수정/삭제보다 왼쪽)에 고정.
-                h1, h_yt, h2, h3 = st.columns([7, 1, 1, 1])
-                h1.markdown(f"### {s['title']}")
-                if s.get("youtube_url"):
-                    h_yt.markdown(
-                        f'<a href="{s["youtube_url"]}" target="_blank" title="YouTube" '
-                        f'style="display:flex;align-items:center;justify-content:center;height:38px;'
-                        f'border:1px solid #E6EEF6;border-radius:8px;background:#F7FBFF;">'
-                        f'<img src="https://upload.wikimedia.org/wikipedia/commons/e/ef/Youtube_logo.png" width="20"></a>',
-                        unsafe_allow_html=True
-                    )
-                if h2.button("", key=f"edit_{s['id']}", icon=":material/edit:", help="수정"):
+                # st.columns는 좁은 화면(모바일)에서 각 칸이 세로로 통째로 쌓여버려 카드 하나가
+                # 화면을 다 채울 정도로 늘어나므로, 폭에 상관없이 한 줄을 유지하는 horizontal
+                # 컨테이너를 씁니다. 제목은 "### " 헤딩 대신 일반 span으로 둬야 남은 공간만큼만
+                # 차지하고 아이콘 버튼들과 한 줄에 나란히 배치됩니다.
+                with st.container(horizontal=True, vertical_alignment="center", gap="small"):
+                    st.markdown(f'<span style="font-size:1.5rem;font-weight:700;">{s["title"]}</span>', unsafe_allow_html=True)
+                    if s.get("youtube_url"):
+                        st.markdown(
+                            f'<a href="{s["youtube_url"]}" target="_blank" title="YouTube" '
+                            f'style="display:flex;align-items:center;justify-content:center;height:38px;'
+                            f'border:1px solid #E6EEF6;border-radius:8px;background:#F7FBFF;">'
+                            f'<img src="https://upload.wikimedia.org/wikipedia/commons/e/ef/Youtube_logo.png" width="20"></a>',
+                            unsafe_allow_html=True, width="content"
+                        )
+                    edit_clicked = st.button("", key=f"edit_{s['id']}", icon=":material/edit:", help="수정")
+                    del_clicked = st.button("", key=f"del_{s['id']}", icon=":material/delete:", help="곡 전체 삭제")
+                if edit_clicked:
                     st.session_state.update({"editing_song": s, "page": "edit_song"}); st.rerun()
-                if h3.button("", key=f"del_{s['id']}", icon=":material/delete:", help="곡 전체 삭제"): delete_confirm_dialog(s['id'], s['title'])
+                if del_clicked:
+                    delete_confirm_dialog(s['id'], s['title'])
                 if s.get("status") == "practice":
                     st.markdown('<span class="pm-badge pm-badge-practice">연습곡</span>', unsafe_allow_html=True)
                 usage = usage_stats.get(s["id"])
@@ -842,33 +849,30 @@ else:
                     render_song_card(s)
 
         # ---------------------------------------------------------
-        # 하단 페이징 네비게이션 컨트롤러 (처음 / 끝 포함 5열 구조)
+        # 하단 페이징 네비게이션 컨트롤러 (처음 / 끝 포함)
+        # st.columns 대신 horizontal 컨테이너를 써서, 좁은 화면에서는 각 버튼이
+        # 전체 폭 한 줄씩 차지하며 통째로 쌓이는 대신 자연스럽게 다음 줄로 넘어가게 합니다.
         # ---------------------------------------------------------
         st.divider()
-        p_col_first, p_col_prev, p_col_text, p_col_next, p_col_last = st.columns([0.7, 0.7, 3, 0.7, 0.7])
-        
-        with p_col_first:
-            if st.button("처음", icon=":material/first_page:", disabled=(st.session_state["current_page"] == 1), use_container_width=True):
-                st.session_state["current_page"] = 1
-                st.rerun()
+        with st.container(horizontal=True, horizontal_alignment="center", vertical_alignment="center", gap="small"):
+            first_clicked = st.button("처음", icon=":material/first_page:", disabled=(st.session_state["current_page"] == 1))
+            prev_clicked = st.button("이전", icon=":material/chevron_left:", disabled=(st.session_state["current_page"] == 1))
+            st.markdown(f"<p style='margin:0;'><b>{st.session_state['current_page']}</b> / {total_pages} 페이지 (총 {total_items}곡)</p>", unsafe_allow_html=True, width="content")
+            next_clicked = st.button("다음", icon=":material/chevron_right:", disabled=(st.session_state["current_page"] == total_pages))
+            last_clicked = st.button("끝", icon=":material/last_page:", disabled=(st.session_state["current_page"] == total_pages))
 
-        with p_col_prev:
-            if st.button("이전", icon=":material/chevron_left:", disabled=(st.session_state["current_page"] == 1), use_container_width=True):
-                st.session_state["current_page"] -= 1
-                st.rerun()
-
-        with p_col_text:
-            st.markdown(f"<p style='text-align: center; margin-top: 5px;'><b>{st.session_state['current_page']}</b> / {total_pages} 페이지 (총 {total_items}곡)</p>", unsafe_allow_html=True)
-
-        with p_col_next:
-            if st.button("다음", icon=":material/chevron_right:", disabled=(st.session_state["current_page"] == total_pages), use_container_width=True):
-                st.session_state["current_page"] += 1
-                st.rerun()
-
-        with p_col_last:
-            if st.button("끝", icon=":material/last_page:", disabled=(st.session_state["current_page"] == total_pages), use_container_width=True):
-                st.session_state["current_page"] = total_pages
-                st.rerun()
+        if first_clicked:
+            st.session_state["current_page"] = 1
+            st.rerun()
+        if prev_clicked:
+            st.session_state["current_page"] -= 1
+            st.rerun()
+        if next_clicked:
+            st.session_state["current_page"] += 1
+            st.rerun()
+        if last_clicked:
+            st.session_state["current_page"] = total_pages
+            st.rerun()
 
         # 페이지 번호로 바로 이동 (현재 페이지 중심으로 일부만 표시)
         PAGE_NUM_WINDOW = 7
@@ -879,13 +883,16 @@ else:
         page_numbers = list(range(window_start, window_end + 1))
 
         if len(page_numbers) > 1:
-            num_cols = st.columns(len(page_numbers))
-            for num_col, p in zip(num_cols, page_numbers):
-                is_current_page = (p == st.session_state["current_page"])
-                if num_col.button(
-                    str(p), key=f"page_num_{p}",
-                    type="primary" if is_current_page else "secondary",
-                    disabled=is_current_page, use_container_width=True
-                ):
+            with st.container(horizontal=True, horizontal_alignment="center", gap="small"):
+                page_num_clicks = {}
+                for p in page_numbers:
+                    is_current_page = (p == st.session_state["current_page"])
+                    page_num_clicks[p] = st.button(
+                        str(p), key=f"page_num_{p}",
+                        type="primary" if is_current_page else "secondary",
+                        disabled=is_current_page
+                    )
+            for p, clicked in page_num_clicks.items():
+                if clicked:
                     st.session_state["current_page"] = p
                     st.rerun()
