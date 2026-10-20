@@ -117,14 +117,14 @@ def find_similar_songs(title, exclude_id=None, threshold=0.6):
     return similar
 
 @st.dialog("비슷한 곡 발견")
-def duplicate_confirm_dialog(similar_songs, title, youtube_url, tags_input, common_ppt_up, mode, song):
+def duplicate_confirm_dialog(similar_songs, title, youtube_url, tags_input, common_ppt_up, mode, song, is_practice):
     st.write(f"'{title}'와(과) 제목이 비슷한 곡이 이미 등록되어 있습니다.")
     for s in similar_songs:
         st.caption(f"- {s.get('title')} (`{s.get('start_key', 'C')}`)")
     st.write("그래도 등록하시겠습니까?")
     c1, c2 = st.columns(2)
     if c1.button("예, 등록합니다", type="primary", use_container_width=True):
-        do_save_song(title, youtube_url, tags_input, common_ppt_up, mode, song)
+        do_save_song(title, youtube_url, tags_input, common_ppt_up, mode, song, is_practice)
     if c2.button("취소", use_container_width=True): st.rerun()
 
 # -------------------------------
@@ -162,7 +162,8 @@ def build_cart_item(song, key):
 
 def generate_random_setlist():
     # 1,2 / 3,4 / 5 곡 구성: 각 쌍은 가능하면 키가 비슷한 곡으로, 마지막 한 곡은 완전 랜덤으로 뽑습니다.
-    pool = [s for s in st.session_state.get("song_cache", []) if s.get("start_key")]
+    # 연습곡은 아직 정식 레퍼토리가 아니므로 후보에서 제외합니다.
+    pool = [s for s in st.session_state.get("song_cache", []) if s.get("start_key") and s.get("status") != "practice"]
     if len(pool) < 5: return None
 
     remaining = pool[:]
@@ -398,7 +399,7 @@ def merge_and_upload_ppt(cart_items, filename):
             st.success("가사 PPT 생성 완료")
     except Exception as e: st.error(f"오류: {e}")
 
-def do_save_song(title, youtube_url, tags_input, common_ppt_up, mode, song):
+def do_save_song(title, youtube_url, tags_input, common_ppt_up, mode, song, is_practice):
     with st.spinner("저장 중..."):
         try:
             final_keys = deepcopy(st.session_state["temp_keys"])
@@ -463,6 +464,7 @@ def do_save_song(title, youtube_url, tags_input, common_ppt_up, mode, song):
             if mode == "add":
                 data["created_at"] = datetime.datetime.now()
                 data["uploaded_by"] = st.session_state.get("user_name") or st.session_state.get("user_email") or "알 수 없음"
+                data["status"] = "practice" if is_practice else "official"
                 db.collection("songs").add(data)
             else:
                 db.collection("songs").document(song["id"]).update(data)
@@ -489,7 +491,11 @@ def show_add_edit_page(mode="add"):
         title = st.text_input("곡 이름 *", value=song.get("title", ""))
         youtube_url = st.text_input("YouTube 링크", value=song.get("youtube_url", ""))
         tags_input = st.text_input("태그 (쉼표 구분)", value=", ".join(song.get("tags", [])) if song.get("tags") else "")
-        
+
+        is_practice = False
+        if mode == "add":
+            is_practice = st.checkbox("🔨 연습곡으로 등록 (정식 곡 목록에는 안 보이고, 나중에 따로 정식 등록할 수 있어요)")
+
         common_ppt_up = st.file_uploader("📝 공통 가사 PPT (모든 Key 공통 사용)", type=["ppt","pptx"])
         if song.get("ppt_drive_url"):
             st.caption("✅ 이미 등록된 공통 가사 PPT가 존재합니다.")
@@ -581,9 +587,9 @@ def show_add_edit_page(mode="add"):
                 if valid_check:
                     similar_songs = find_similar_songs(title, exclude_id=song.get("id") if mode == "edit" else None)
                     if similar_songs:
-                        duplicate_confirm_dialog(similar_songs, title, youtube_url, tags_input, common_ppt_up, mode, song)
+                        duplicate_confirm_dialog(similar_songs, title, youtube_url, tags_input, common_ppt_up, mode, song, is_practice)
                     else:
-                        do_save_song(title, youtube_url, tags_input, common_ppt_up, mode, song)
+                        do_save_song(title, youtube_url, tags_input, common_ppt_up, mode, song, is_practice)
 
 if st.session_state["page"] == "add_song": show_add_edit_page("add")
 elif st.session_state["page"] == "edit_song": show_add_edit_page("edit")
@@ -698,10 +704,17 @@ else:
     if t2.button("찬양곡 추가", type="primary", use_container_width=True):
         st.session_state["page"] = "add_song"; st.rerun()
         
+    practice_count = sum(1 for s in all_songs if s.get("status") == "practice")
+    view_mode = st.radio(
+        "보기", ["정식곡", f"연습곡 ({practice_count})"], horizontal=True, label_visibility="collapsed"
+    )
+    is_practice_view = view_mode.startswith("연습곡")
+
     q = st.text_input("검색", placeholder="제목, 태그, Key 검색", label_visibility="collapsed").strip().lower()
 
+    status_songs = [s for s in all_songs if (s.get("status") == "practice") == is_practice_view]
     filtered_songs = [
-        s for s in all_songs
+        s for s in status_songs
         if not q or q in s['title'].lower() or any(q in t.lower() for t in s.get('tags', [])) or q in s.get('start_key', '').lower()
     ]
 
@@ -726,34 +739,41 @@ else:
                 if h2.button("수정", key=f"edit_{s['id']}"):
                     st.session_state.update({"editing_song": s, "page": "edit_song"}); st.rerun()
                 if h3.button("🗑️ 곡 전체 삭제", key=f"del_{s['id']}"): delete_confirm_dialog(s['id'], s['title'])
+                if s.get("status") == "practice": st.caption("🔨 연습곡")
                 if s.get("uploaded_by"): st.caption(f"👤 업로드: {s['uploaded_by']}")
                 if s.get("tags"): st.markdown(" ".join([f"`#{tag}`" for tag in s["tags"]]))
-                
+
                 available_keys = list(s.get("keys", {}).keys())
                 if not available_keys and s.get("start_key"): available_keys = [s["start_key"]]
                 if not available_keys: available_keys = ["C"]
 
                 st.markdown("**보유 중인 Key:** " + " ".join([f"`{k}`" for k in available_keys]))
 
-                k_select_col, btn_add_col = st.columns([2, 8])
-                chosen_key = k_select_col.selectbox("코드 선택", available_keys, key=f"sel_k_{s['id']}", label_visibility="collapsed")
-
-                if btn_add_col.button(f"[{chosen_key} 코드] 콘티 리스트에 담기", key=f"add_{s['id']}", use_container_width=True, type="primary"):
-                    if not any(item['id'] == s['id'] and item.get('selected_key') == chosen_key for item in st.session_state["cart"]):
-                        song_to_cart = deepcopy(s)
-                        
-                        # --- [🔥 핵심 수정: 선택된 코드에 맞는 이미지로 강제 오버라이드] ---
-                        # 사용자가 선택한 key(chosen_key) 안에 개별 image_url이 존재한다면 
-                        # 카트에 들어갈 복사본 데이터의 image_url을 해당 이미지로 정확하게 갱신해 줍니다.
-                        specific_image = s.get("keys", {}).get(chosen_key, {}).get("image_url")
-                        if specific_image:
-                            song_to_cart["image_url"] = specific_image
-                        # ------------------------------------------------------------------
-                        
-                        song_to_cart["selected_key"] = chosen_key
-                        st.session_state["cart"].append(song_to_cart)
+                chosen_key = available_keys[0]
+                if s.get("status") == "practice":
+                    if st.button("🎓 정식 곡으로 등록", key=f"promote_{s['id']}", use_container_width=True, type="primary"):
+                        db.collection("songs").document(s["id"]).update({"status": "official"})
                         st.rerun()
-                        
+                else:
+                    k_select_col, btn_add_col = st.columns([2, 8])
+                    chosen_key = k_select_col.selectbox("코드 선택", available_keys, key=f"sel_k_{s['id']}", label_visibility="collapsed")
+
+                    if btn_add_col.button(f"[{chosen_key} 코드] 콘티 리스트에 담기", key=f"add_{s['id']}", use_container_width=True, type="primary"):
+                        if not any(item['id'] == s['id'] and item.get('selected_key') == chosen_key for item in st.session_state["cart"]):
+                            song_to_cart = deepcopy(s)
+
+                            # --- [🔥 핵심 수정: 선택된 코드에 맞는 이미지로 강제 오버라이드] ---
+                            # 사용자가 선택한 key(chosen_key) 안에 개별 image_url이 존재한다면
+                            # 카트에 들어갈 복사본 데이터의 image_url을 해당 이미지로 정확하게 갱신해 줍니다.
+                            specific_image = s.get("keys", {}).get(chosen_key, {}).get("image_url")
+                            if specific_image:
+                                song_to_cart["image_url"] = specific_image
+                            # ------------------------------------------------------------------
+
+                            song_to_cart["selected_key"] = chosen_key
+                            st.session_state["cart"].append(song_to_cart)
+                            st.rerun()
+
                 l1, l2, l3 = st.columns(3)
                 if s.get("youtube_url"):
                     l1.markdown(f'<a href="{s["youtube_url"]}" target="_blank" style="display:flex;align-items:center;justify-content:center;background-color:#F0F2F6;color:#262730;padding:5px 10px;border-radius:5px;text-decoration:none;font-size:13px;border:1px solid #E6E9EF;gap:5px;"><img src="https://upload.wikimedia.org/wikipedia/commons/e/ef/Youtube_logo.png" width="18">YouTube</a>', unsafe_allow_html=True)
