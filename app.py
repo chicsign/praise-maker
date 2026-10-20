@@ -24,8 +24,10 @@ from googleapiclient.http import (
 )
 from googleapiclient.errors import HttpError
 
-# 로컬 테스트 시 보안 연결 허용
-os.environ['OAUTHLIB_INSECURE_TRANSPORT'] = '1'
+# 로컬 테스트(http://localhost)에서만 보안 연결 검증을 느슨하게 허용합니다.
+# OAUTH_REDIRECT_URI가 https로 설정된 운영 환경에서는 이 플래그를 켜지 않습니다.
+if os.environ.get("OAUTH_REDIRECT_URI", "http://localhost:8501").strip().startswith("http://"):
+    os.environ['OAUTHLIB_INSECURE_TRANSPORT'] = '1'
 
 st.set_page_config(
     page_title="Praise Maker",
@@ -66,11 +68,20 @@ div[class*="st-key-key-block-"] {
 
 # -------------------------------
 # 새로고침에도 로그인이 풀리지 않도록, 암호화된 쿠키에 로그인 정보를 보관
-# (COOKIES_PASSWORD 미설정 시 기본값으로 동작은 하지만 배포 환경에서는 반드시 별도 값으로 설정할 것)
+# Cloud Run(K_SERVICE 환경변수로 감지)에서는 COOKIES_PASSWORD를 반드시 직접 설정해야 하며,
+# 설정을 깜빡했을 때 소스에 박힌 약한 기본값으로 조용히 넘어가지 않도록 바로 중단합니다.
 # -------------------------------
+IS_CLOUD_RUN = bool(os.environ.get("K_SERVICE"))
+_cookies_password = os.environ.get("COOKIES_PASSWORD")
+if not _cookies_password:
+    if IS_CLOUD_RUN:
+        st.error("환경변수 COOKIES_PASSWORD가 설정되지 않았습니다. Cloud Run 서비스 설정에서 반드시 값을 지정해 주세요.")
+        st.stop()
+    _cookies_password = "praise-maker-dev-only-change-me"  # 로컬 테스트 전용 기본값
+
 cookies = EncryptedCookieManager(
     prefix="praisemaker/",
-    password=os.environ.get("COOKIES_PASSWORD", "praise-maker-dev-only-change-me")
+    password=_cookies_password
 )
 if not cookies.ready():
     st.stop()
