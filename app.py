@@ -796,23 +796,21 @@ else:
         
         def render_song_card(s):
             with st.container(border=True, key=f"song-card-{s['id']}", gap=None):
-                if s.get("youtube_url"):
-                    h1, h2, h3, h4 = st.columns([7, 1, 1, 1])
-                else:
-                    h1, h2, h3 = st.columns([8, 1, 1])
-                    h4 = None
+                # 유튜브 유무와 상관없이 항상 같은 칸 구성을 써서, 카드마다 수정/삭제 위치가
+                # 흔들리지 않도록 합니다. 유튜브 아이콘은 제목 바로 오른쪽(수정/삭제보다 왼쪽)에 고정.
+                h1, h_yt, h2, h3 = st.columns([7, 1, 1, 1])
                 h1.markdown(f"### {s['title']}")
-                if h2.button("", key=f"edit_{s['id']}", icon=":material/edit:", help="수정"):
-                    st.session_state.update({"editing_song": s, "page": "edit_song"}); st.rerun()
-                if h3.button("", key=f"del_{s['id']}", icon=":material/delete:", help="곡 전체 삭제"): delete_confirm_dialog(s['id'], s['title'])
-                if h4 is not None:
-                    h4.markdown(
+                if s.get("youtube_url"):
+                    h_yt.markdown(
                         f'<a href="{s["youtube_url"]}" target="_blank" title="YouTube" '
                         f'style="display:flex;align-items:center;justify-content:center;height:38px;'
                         f'border:1px solid #E6EEF6;border-radius:8px;background:#F7FBFF;">'
                         f'<img src="https://upload.wikimedia.org/wikipedia/commons/e/ef/Youtube_logo.png" width="20"></a>',
                         unsafe_allow_html=True
                     )
+                if h2.button("", key=f"edit_{s['id']}", icon=":material/edit:", help="수정"):
+                    st.session_state.update({"editing_song": s, "page": "edit_song"}); st.rerun()
+                if h3.button("", key=f"del_{s['id']}", icon=":material/delete:", help="곡 전체 삭제"): delete_confirm_dialog(s['id'], s['title'])
                 if s.get("status") == "practice":
                     st.markdown('<span class="pm-badge pm-badge-practice">연습곡</span>', unsafe_allow_html=True)
                 usage = usage_stats.get(s["id"])
