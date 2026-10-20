@@ -794,13 +794,25 @@ else:
         end_idx = start_idx + ITEMS_PER_PAGE
         page_items = filtered_songs[start_idx:end_idx]
         
-        for s in page_items:
+        def render_song_card(s):
             with st.container(border=True, key=f"song-card-{s['id']}", gap=None):
-                h1, h2, h3 = st.columns([8,1,1])
+                if s.get("youtube_url"):
+                    h1, h2, h3, h4 = st.columns([7, 1, 1, 1])
+                else:
+                    h1, h2, h3 = st.columns([8, 1, 1])
+                    h4 = None
                 h1.markdown(f"### {s['title']}")
                 if h2.button("", key=f"edit_{s['id']}", icon=":material/edit:", help="수정"):
                     st.session_state.update({"editing_song": s, "page": "edit_song"}); st.rerun()
                 if h3.button("", key=f"del_{s['id']}", icon=":material/delete:", help="곡 전체 삭제"): delete_confirm_dialog(s['id'], s['title'])
+                if h4 is not None:
+                    h4.markdown(
+                        f'<a href="{s["youtube_url"]}" target="_blank" title="YouTube" '
+                        f'style="display:flex;align-items:center;justify-content:center;height:38px;'
+                        f'border:1px solid #E6EEF6;border-radius:8px;background:#F7FBFF;">'
+                        f'<img src="https://upload.wikimedia.org/wikipedia/commons/e/ef/Youtube_logo.png" width="20"></a>',
+                        unsafe_allow_html=True
+                    )
                 if s.get("status") == "practice":
                     st.markdown('<span class="pm-badge pm-badge-practice">연습곡</span>', unsafe_allow_html=True)
                 usage = usage_stats.get(s["id"])
@@ -849,18 +861,22 @@ else:
                             st.session_state["cart"].append(song_to_cart)
                             st.rerun()
 
-                l1, l2, l3 = st.columns(3)
-                if s.get("youtube_url"):
-                    l1.markdown(f'<a href="{s["youtube_url"]}" target="_blank" style="display:flex;align-items:center;justify-content:center;background-color:#F7FBFF;color:#1E293B;padding:5px 10px;border-radius:8px;text-decoration:none;font-size:13px;border:1px solid #E6EEF6;gap:5px;"><img src="https://upload.wikimedia.org/wikipedia/commons/e/ef/Youtube_logo.png" width="18">YouTube</a>', unsafe_allow_html=True)
-
+                l1, l2 = st.columns(2)
                 tgt_img = s.get("image_url", "")
                 if "keys" in s and chosen_key in s["keys"]:
                     tgt_img = s["keys"][chosen_key].get("image_url", tgt_img)
                 tgt_ppt = s.get("ppt_drive_url", "")
 
-                if tgt_img: l2.markdown(f'<a href="{tgt_img}" target="_blank" style="display:flex;align-items:center;justify-content:center;background-color:#F7FBFF;color:#1E293B;padding:5px 10px;border-radius:8px;text-decoration:none;font-size:13px;border:1px solid #E6EEF6;">악보 이미지 ({chosen_key})</a>', unsafe_allow_html=True)
-                if tgt_ppt: l3.markdown(f'<a href="{tgt_ppt}" target="_blank" style="display:flex;align-items:center;justify-content:center;background-color:#F7FBFF;color:#1E293B;padding:5px 10px;border-radius:8px;text-decoration:none;font-size:13px;border:1px solid #E6EEF6;">가사 PPT (공통)</a>', unsafe_allow_html=True)
-        
+                if tgt_img: l1.markdown(f'<a href="{tgt_img}" target="_blank" style="display:flex;align-items:center;justify-content:center;background-color:#F7FBFF;color:#1E293B;padding:5px 10px;border-radius:8px;text-decoration:none;font-size:13px;border:1px solid #E6EEF6;">악보 이미지 ({chosen_key})</a>', unsafe_allow_html=True)
+                if tgt_ppt: l2.markdown(f'<a href="{tgt_ppt}" target="_blank" style="display:flex;align-items:center;justify-content:center;background-color:#F7FBFF;color:#1E293B;padding:5px 10px;border-radius:8px;text-decoration:none;font-size:13px;border:1px solid #E6EEF6;">가사 PPT (공통)</a>', unsafe_allow_html=True)
+
+        for row_start in range(0, len(page_items), 2):
+            row_items = page_items[row_start:row_start + 2]
+            card_cols = st.columns(2)
+            for card_col, s in zip(card_cols, row_items):
+                with card_col:
+                    render_song_card(s)
+
         # ---------------------------------------------------------
         # 하단 페이징 네비게이션 컨트롤러 (처음 / 끝 포함 5열 구조)
         # ---------------------------------------------------------
