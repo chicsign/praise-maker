@@ -889,3 +889,23 @@ else:
             if st.button("끝", icon=":material/last_page:", disabled=(st.session_state["current_page"] == total_pages), use_container_width=True):
                 st.session_state["current_page"] = total_pages
                 st.rerun()
+
+        # 페이지 번호로 바로 이동 (현재 페이지 중심으로 일부만 표시)
+        PAGE_NUM_WINDOW = 7
+        half_window = PAGE_NUM_WINDOW // 2
+        window_start = max(1, st.session_state["current_page"] - half_window)
+        window_end = min(total_pages, window_start + PAGE_NUM_WINDOW - 1)
+        window_start = max(1, window_end - PAGE_NUM_WINDOW + 1)
+        page_numbers = list(range(window_start, window_end + 1))
+
+        if len(page_numbers) > 1:
+            num_cols = st.columns(len(page_numbers))
+            for num_col, p in zip(num_cols, page_numbers):
+                is_current_page = (p == st.session_state["current_page"])
+                if num_col.button(
+                    str(p), key=f"page_num_{p}",
+                    type="primary" if is_current_page else "secondary",
+                    disabled=is_current_page, use_container_width=True
+                ):
+                    st.session_state["current_page"] = p
+                    st.rerun()
