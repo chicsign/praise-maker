@@ -54,6 +54,13 @@ st.markdown("""
 }
 .pm-badge-practice { background: #F3E8FF; color: #7E22CE; }
 .pm-badge-warning { background: #FEF3E2; color: #B45309; }
+
+/* 곡 카드 / 콘티 카트 카드 / Key 블록: st.container(key=...)가 붙여주는 공식 st-key- 클래스를 활용 */
+div[class*="st-key-song-card-"],
+div[class*="st-key-cart-item-"],
+div[class*="st-key-key-block-"] {
+    background: #FFFFFF;
+}
 </style>
 """, unsafe_allow_html=True)
 
@@ -560,7 +567,7 @@ def show_add_edit_page(mode="add"):
 
         keys_to_delete = []
         for k_code, k_data in list(st.session_state["temp_keys"].items()):
-            with st.container(border=True):
+            with st.container(border=True, key=f"key-block-{k_code}", gap=None):
                 ck1, ck2, ck3 = st.columns([1, 2, 1])
                 ck1.markdown(f"### Key: `{k_code}`")
 
@@ -682,7 +689,7 @@ else:
         if st.session_state["cart"]:
             fname = st.text_input("파일명", value=f"콘티_{datetime.datetime.now().strftime('%y%m%d')}")
             for idx, item in enumerate(st.session_state["cart"]):
-                with st.container(border=True):
+                with st.container(border=True, key=f"cart-item-{idx}", gap=None):
                     c1, c2, c3, c4 = st.columns([4,1,1,1])
                     sel_key = item.get("selected_key", "C")
                     c1.write(f"**{idx+1}. {item['title']} ({sel_key})**")
@@ -788,12 +795,12 @@ else:
         page_items = filtered_songs[start_idx:end_idx]
         
         for s in page_items:
-            with st.container(border=True):
+            with st.container(border=True, key=f"song-card-{s['id']}", gap=None):
                 h1, h2, h3 = st.columns([8,1,1])
                 h1.markdown(f"### {s['title']}")
-                if h2.button("수정", key=f"edit_{s['id']}", icon=":material/edit:"):
+                if h2.button("", key=f"edit_{s['id']}", icon=":material/edit:", help="수정"):
                     st.session_state.update({"editing_song": s, "page": "edit_song"}); st.rerun()
-                if h3.button("곡 전체 삭제", key=f"del_{s['id']}", icon=":material/delete:"): delete_confirm_dialog(s['id'], s['title'])
+                if h3.button("", key=f"del_{s['id']}", icon=":material/delete:", help="곡 전체 삭제"): delete_confirm_dialog(s['id'], s['title'])
                 if s.get("status") == "practice":
                     st.markdown('<span class="pm-badge pm-badge-practice">연습곡</span>', unsafe_allow_html=True)
                 usage = usage_stats.get(s["id"])

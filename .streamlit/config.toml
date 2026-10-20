@@ -4,3 +4,6 @@ backgroundColor = "#EFF7FD"
 secondaryBackgroundColor = "#FFFFFF"
 textColor = "#1E293B"
 font = "sans serif"
+baseRadius = "1rem"
+borderColor = "#D7E9F7"
+showWidgetBorder = false
