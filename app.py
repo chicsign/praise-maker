@@ -186,6 +186,35 @@ def generate_random_setlist():
 
     return [build_cart_item(s, s["start_key"]) for s in (song1, song2, song3, song4, song5)]
 
+# -------------------------------
+# 자주 사용된 곡 (최근 사용 기록 집계)
+# -------------------------------
+RECENT_USE_SHOW_DAYS = 14   # 최근 이 기간 안에 쓴 곡만 "최근 사용" 표시를 함
+FREQUENT_USE_WINDOW_DAYS = 30  # 이 기간 내 사용 횟수를 "최근 N회"로 집계
+FREQUENT_USE_THRESHOLD = 2  # 집계 기간 내 이 횟수 이상이면 "자주 사용됨" 경고로 격상
+
+def compute_song_usage_stats():
+    # 악보/가사 PPT 생성 시 이미 playlists에 사용 기록이 남고 있어서, 새 쓰기 로직 없이 이걸 집계만 합니다.
+    # 같은 날 악보+가사를 둘 다 생성하면 콘티 기록이 2건 남는데, 실제로는 1번 쓴 거라 (곡ID, 날짜) 기준으로 중복 제거합니다.
+    song_dates = {}
+    for doc in db.collection("playlists").stream():
+        d = doc.to_dict()
+        created_at = d.get("created_at")
+        if not hasattr(created_at, "date"): continue
+        date_obj = created_at.date()
+        for item in d.get("items", []):
+            song_id = item.get("id")
+            if not song_id: continue
+            song_dates.setdefault(song_id, set()).add(date_obj)
+
+    today = datetime.date.today()
+    stats = {}
+    for song_id, dates in song_dates.items():
+        last_used = max(dates)
+        recent_count = sum(1 for d in dates if (today - d).days <= FREQUENT_USE_WINDOW_DAYS)
+        stats[song_id] = {"last_used": last_used, "recent_count": recent_count}
+    return stats
+
 def save_credentials_to_cookie(creds_dict):
     try:
         cookies["refresh_token"] = creds_dict.get("refresh_token") or ""
@@ -601,6 +630,7 @@ else:
     docs = db.collection("songs").order_by("created_at", direction="DESCENDING").stream()
     all_songs = [doc.to_dict() | {"id": doc.id} for doc in docs]
     st.session_state["song_cache"] = all_songs
+    usage_stats = compute_song_usage_stats()
 
     with st.sidebar:
         st.header("계정")
@@ -740,6 +770,15 @@ else:
                     st.session_state.update({"editing_song": s, "page": "edit_song"}); st.rerun()
                 if h3.button("🗑️ 곡 전체 삭제", key=f"del_{s['id']}"): delete_confirm_dialog(s['id'], s['title'])
                 if s.get("status") == "practice": st.caption("🔨 연습곡")
+                usage = usage_stats.get(s["id"])
+                if usage:
+                    days_ago = (datetime.date.today() - usage["last_used"]).days
+                    if days_ago <= RECENT_USE_SHOW_DAYS:
+                        when_text = "오늘" if days_ago == 0 else f"{days_ago}일 전"
+                        if usage["recent_count"] >= FREQUENT_USE_THRESHOLD:
+                            st.caption(f"⚠️ 최근 자주 사용됨 (최근 {FREQUENT_USE_WINDOW_DAYS}일간 {usage['recent_count']}회, {when_text})")
+                        else:
+                            st.caption(f"🔁 최근 사용: {when_text}")
                 if s.get("uploaded_by"): st.caption(f"👤 업로드: {s['uploaded_by']}")
                 if s.get("tags"): st.markdown(" ".join([f"`#{tag}`" for tag in s["tags"]]))
 
