@@ -8,6 +8,7 @@ import subprocess
 import platform
 import requests
 import difflib
+import random
 from copy import deepcopy
 from streamlit_cookies_manager import EncryptedCookieManager
 
@@ -125,6 +126,64 @@ def duplicate_confirm_dialog(similar_songs, title, youtube_url, tags_input, comm
     if c1.button("예, 등록합니다", type="primary", use_container_width=True):
         do_save_song(title, youtube_url, tags_input, common_ppt_up, mode, song)
     if c2.button("취소", use_container_width=True): st.rerun()
+
+# -------------------------------
+# 랜덤 콘티 생성 (키 기준 매칭)
+# -------------------------------
+NATURAL_KEY_PITCH = {"C": 0, "D": 2, "E": 4, "F": 5, "G": 7, "A": 9, "B": 11}
+SIMILAR_KEY_DISTANCE_THRESHOLD = 1  # 같은 키 또는 완전5도 이내(예: C-G, C-F)까지 "비슷한 키"로 취급
+
+def key_to_pitch_class(key):
+    if not key: return None
+    base = key[0].upper()
+    if base not in NATURAL_KEY_PITCH: return None
+    pitch = NATURAL_KEY_PITCH[base]
+    if len(key) > 1:
+        if key[1] == "#": pitch += 1
+        elif key[1] == "b": pitch -= 1
+    return pitch % 12
+
+def key_distance(key1, key2):
+    # 5도권(circle of fifths) 기준 거리: 완전5도만큼 떨어진 키일수록 전조가 자연스러워 "비슷한 키"로 취급합니다.
+    p1, p2 = key_to_pitch_class(key1), key_to_pitch_class(key2)
+    if p1 is None or p2 is None: return 99
+    pos1, pos2 = (7 * p1) % 12, (7 * p2) % 12
+    diff = abs(pos1 - pos2)
+    return min(diff, 12 - diff)
+
+def build_cart_item(song, key):
+    item = deepcopy(song)
+    specific_image = song.get("keys", {}).get(key, {}).get("image_url")
+    if specific_image:
+        item["image_url"] = specific_image
+    item["selected_key"] = key
+    item["is_full_page"] = False
+    return item
+
+def generate_random_setlist():
+    # 1,2 / 3,4 / 5 곡 구성: 각 쌍은 가능하면 키가 비슷한 곡으로, 마지막 한 곡은 완전 랜덤으로 뽑습니다.
+    pool = [s for s in st.session_state.get("song_cache", []) if s.get("start_key")]
+    if len(pool) < 5: return None
+
+    remaining = pool[:]
+
+    def take_random():
+        return remaining.pop(random.randrange(len(remaining)))
+
+    def take_similar(ref_key):
+        candidates = [s for s in remaining if key_distance(ref_key, s.get("start_key")) <= SIMILAR_KEY_DISTANCE_THRESHOLD]
+        if not candidates: return take_random()
+        chosen = random.choice(candidates)
+        remaining.remove(chosen)
+        return chosen
+
+    song1 = take_random()
+    song2 = take_similar(song1["start_key"])
+    song3 = take_random()
+    song4 = take_similar(song3["start_key"])
+    song5 = take_random()
+
+    return [build_cart_item(s, s["start_key"]) for s in (song1, song2, song3, song4, song5)]
 
 def save_credentials_to_cookie(creds_dict):
     try:
@@ -531,7 +590,12 @@ elif st.session_state["page"] == "edit_song": show_add_edit_page("edit")
 else:
     if st.session_state["credentials"]:
         validate_and_refresh_credentials()
-            
+
+    # 사이드바(랜덤 콘티 생성 포함)에서도 바로 쓸 수 있도록, 검색창보다 먼저 곡 목록을 캐싱해둡니다.
+    docs = db.collection("songs").order_by("created_at", direction="DESCENDING").stream()
+    all_songs = [doc.to_dict() | {"id": doc.id} for doc in docs]
+    st.session_state["song_cache"] = all_songs
+
     with st.sidebar:
         st.header("계정")
         if st.session_state["credentials"] is None:
@@ -546,6 +610,14 @@ else:
             st.link_button("가사 콘티 폴더", LYRICS_FOLDER_URL, use_container_width=True)
         
         st.divider(); st.header("콘티 리스트")
+        if st.button("🎲 랜덤 콘티 생성 (5곡)", use_container_width=True):
+            new_cart = generate_random_setlist()
+            if new_cart is None:
+                st.error("랜덤 콘티를 만들려면 최소 5곡 이상 등록되어 있어야 합니다.")
+            else:
+                st.session_state.update({"cart": new_cart, "slide_url": None, "ppt_slide_url": None})
+                st.rerun()
+
         if st.session_state["cart"]:
             fname = st.text_input("파일명", value=f"콘티_{datetime.datetime.now().strftime('%y%m%d')}")
             for idx, item in enumerate(st.session_state["cart"]):
@@ -627,11 +699,6 @@ else:
         st.session_state["page"] = "add_song"; st.rerun()
         
     q = st.text_input("검색", placeholder="제목, 태그, Key 검색", label_visibility="collapsed").strip().lower()
-    docs = db.collection("songs").order_by("created_at", direction="DESCENDING").stream()
-
-    all_songs = [doc.to_dict() | {"id": doc.id} for doc in docs]
-    # 추가/수정 페이지의 중복 곡 체크용으로 캐싱해, 거기서 별도 조회를 하지 않도록 합니다.
-    st.session_state["song_cache"] = all_songs
 
     filtered_songs = [
         s for s in all_songs
