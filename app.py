@@ -12,8 +12,10 @@ import random
 from copy import deepcopy
 from streamlit_cookies_manager import EncryptedCookieManager
 
-from services.firebase_service import db, bucket
+from services.firebase_service import bucket
 from services.google_slides_service import create_flow, create_praise_slides
+from services import songs_repo, playlists_repo
+from services.playlists_repo import FREQUENT_USE_WINDOW_DAYS
 
 from google.oauth2.credentials import Credentials
 from google.auth.transport.requests import Request
@@ -126,8 +128,7 @@ def delete_confirm_dialog(song_id, title):
     st.caption("주의: 이 곡에 등록된 모든 코드(Key)의 악보와 공통 PPT 정보가 DB에서 완전히 삭제됩니다.")
     c1, c2 = st.columns(2)
     if c1.button("예, 전체 삭제합니다", icon=":material/delete_forever:", type="primary", use_container_width=True):
-        db.collection("songs").document(song_id).delete()
-        fetch_all_songs.clear()
+        songs_repo.delete_song(song_id)
         st.rerun()
     if c2.button("취소", use_container_width=True): st.rerun()
 
@@ -137,9 +138,7 @@ def delete_history_dialog(doc_id, title):
     st.caption("※ 드라이브 파일은 유지되며 목록에서만 사라집니다.")
     c1, c2 = st.columns(2)
     if c1.button("기록 삭제", icon=":material/delete:", type="primary", use_container_width=True):
-        db.collection("playlists").document(doc_id).delete()
-        fetch_recent_playlists.clear()
-        compute_song_usage_stats.clear()
+        playlists_repo.delete_playlist(doc_id)
         st.rerun()
     if c2.button("취소", use_container_width=True): st.rerun()
 
@@ -236,48 +235,7 @@ def generate_random_setlist():
 # 자주 사용된 곡 (최근 사용 기록 집계)
 # -------------------------------
 RECENT_USE_SHOW_DAYS = 14   # 최근 이 기간 안에 쓴 곡만 "최근 사용" 표시를 함
-FREQUENT_USE_WINDOW_DAYS = 30  # 이 기간 내 사용 횟수를 "최근 N회"로 집계
 FREQUENT_USE_THRESHOLD = 2  # 집계 기간 내 이 횟수 이상이면 "자주 사용됨" 경고로 격상
-
-# -------------------------------
-# Firestore 조회 캐싱 (비용 절감)
-# 검색어 입력, 페이지 이동 등 데이터 변경이 없는 재실행에서는 Firestore를 다시 읽지 않도록 캐싱합니다.
-# 곡/콘티를 실제로 추가·수정·삭제하는 곳에서는 해당 캐시를 .clear()로 즉시 무효화해 바로 반영되게 합니다.
-# -------------------------------
-CACHE_TTL_SECONDS = 300  # 5분: 누군가 다른 브라우저에서 변경해도 이 시간 내에는 반영됨
-
-@st.cache_data(ttl=CACHE_TTL_SECONDS, show_spinner=False)
-def fetch_all_songs():
-    docs = db.collection("songs").order_by("created_at", direction="DESCENDING").stream()
-    return [doc.to_dict() | {"id": doc.id} for doc in docs]
-
-@st.cache_data(ttl=CACHE_TTL_SECONDS, show_spinner=False)
-def fetch_recent_playlists(limit=5):
-    docs = db.collection("playlists").order_by("created_at", direction="DESCENDING").limit(limit).stream()
-    return [(doc.id, doc.to_dict()) for doc in docs]
-
-@st.cache_data(ttl=CACHE_TTL_SECONDS, show_spinner=False)
-def compute_song_usage_stats():
-    # 악보/가사 PPT 생성 시 이미 playlists에 사용 기록이 남고 있어서, 새 쓰기 로직 없이 이걸 집계만 합니다.
-    # 같은 날 악보+가사를 둘 다 생성하면 콘티 기록이 2건 남는데, 실제로는 1번 쓴 거라 (곡ID, 날짜) 기준으로 중복 제거합니다.
-    song_dates = {}
-    for doc in db.collection("playlists").stream():
-        d = doc.to_dict()
-        created_at = d.get("created_at")
-        if not hasattr(created_at, "date"): continue
-        date_obj = created_at.date()
-        for item in d.get("items", []):
-            song_id = item.get("id")
-            if not song_id: continue
-            song_dates.setdefault(song_id, set()).add(date_obj)
-
-    today = datetime.date.today()
-    stats = {}
-    for song_id, dates in song_dates.items():
-        last_used = max(dates)
-        recent_count = sum(1 for d in dates if (today - d).days <= FREQUENT_USE_WINDOW_DAYS)
-        stats[song_id] = {"last_used": last_used, "recent_count": recent_count}
-    return stats
 
 def save_credentials_to_cookie(creds_dict):
     try:
@@ -438,15 +396,7 @@ def upload_file_to_drive(uploaded_file, folder_id, creds):
 # -------------------------------
 def save_playlist_to_firebase(filename, cart_items, file_url):
     try:
-        db.collection("playlists").add({
-            "title": filename,
-            "items": [{"id": item["id"], "title": item["title"], "selected_key": item.get("selected_key", "C")} for item in cart_items],
-            "file_url": file_url,
-            "user_email": st.session_state.get("user_email"),
-            "created_at": datetime.datetime.now()
-        })
-        fetch_recent_playlists.clear()
-        compute_song_usage_stats.clear()
+        playlists_repo.add_playlist(filename, cart_items, file_url, st.session_state.get("user_email"))
     except Exception as e: st.error(f"콘티 저장 실패: {e}")
 
 def merge_and_upload_ppt(cart_items, filename):
@@ -560,10 +510,9 @@ def do_save_song(title, youtube_url, tags_input, common_ppt_up, mode, song, is_p
                 data["created_at"] = datetime.datetime.now()
                 data["uploaded_by"] = st.session_state.get("user_name") or st.session_state.get("user_email") or "알 수 없음"
                 data["status"] = "practice" if is_practice else "official"
-                db.collection("songs").add(data)
+                songs_repo.add_song(data)
             else:
-                db.collection("songs").document(song["id"]).update(data)
-            fetch_all_songs.clear()
+                songs_repo.update_song(song["id"], data)
 
             st.session_state.update({"page": "main", "editing_song": None, "temp_keys": None})
             st.success("저장 완료"); st.rerun()
@@ -694,9 +643,9 @@ else:
         validate_and_refresh_credentials()
 
     # 사이드바(랜덤 콘티 생성 포함)에서도 바로 쓸 수 있도록, 검색창보다 먼저 곡 목록을 캐싱해둡니다.
-    all_songs = fetch_all_songs()
+    all_songs = songs_repo.fetch_all_songs()
     st.session_state["song_cache"] = all_songs
-    usage_stats = compute_song_usage_stats()
+    usage_stats = playlists_repo.compute_song_usage_stats()
 
     with st.sidebar:
         st.header("계정")
@@ -773,17 +722,15 @@ else:
         else: st.caption("곡을 담아주세요")
 
         st.divider(); st.header("최근 생성 콘티")
-        history = fetch_recent_playlists(5)
+        history = playlists_repo.fetch_recent_playlists(5)
         for h_id, h in history:
             with st.expander(f"{h['title']} ({h['created_at'].strftime('%m/%d %H:%M')})"):
                 if st.button("콘티 리스트에 담기", key=f"hist_load_{h_id}", icon=":material/playlist_add:", use_container_width=True, type="primary"):
                     missing_songs = []
                     new_items = []
                     for s_item in h.get("items", []):
-                        song_ref = db.collection("songs").document(s_item["id"]).get()
-                        if song_ref.exists:
-                            song_data = song_ref.to_dict()
-                            song_data["id"] = s_item["id"]
+                        song_data = songs_repo.get_song(s_item["id"])
+                        if song_data:
                             song_data["selected_key"] = s_item.get("selected_key", "C")
                             if not any(i["id"] == song_data["id"] and i.get("selected_key") == song_data["selected_key"] for i in st.session_state["cart"]):
                                 new_items.append(song_data)
@@ -870,8 +817,7 @@ else:
                 chosen_key = available_keys[0]
                 if s.get("status") == "practice":
                     if st.button("정식 곡으로 등록", key=f"promote_{s['id']}", icon=":material/school:", use_container_width=True, type="primary"):
-                        db.collection("songs").document(s["id"]).update({"status": "official"})
-                        fetch_all_songs.clear()
+                        songs_repo.promote_to_official(s["id"])
                         st.rerun()
                 else:
                     k_select_col, btn_add_col = st.columns([2, 8])
