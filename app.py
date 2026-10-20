@@ -33,6 +33,31 @@ st.set_page_config(
 )
 
 # -------------------------------
+# 전역 스타일 (폰트 + 상태 배지)
+# -------------------------------
+st.markdown("""
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;600;700;800&display=swap');
+
+/* 상속으로만 적용 (아이콘 폰트처럼 자체 font-family를 지정한 요소는 그대로 유지됨) */
+.stApp {
+    font-family: 'Noto Sans KR', sans-serif;
+}
+
+.pm-badge {
+    display: inline-block;
+    font-size: 12px;
+    font-weight: 700;
+    padding: 3px 10px;
+    border-radius: 999px;
+    margin: 2px 4px 2px 0;
+}
+.pm-badge-practice { background: #F3E8FF; color: #7E22CE; }
+.pm-badge-warning { background: #FEF3E2; color: #B45309; }
+</style>
+""", unsafe_allow_html=True)
+
+# -------------------------------
 # 새로고침에도 로그인이 풀리지 않도록, 암호화된 쿠키에 로그인 정보를 보관
 # (COOKIES_PASSWORD 미설정 시 기본값으로 동작은 하지만 배포 환경에서는 반드시 별도 값으로 설정할 것)
 # -------------------------------
@@ -80,9 +105,9 @@ for key, default in session_keys.items():
 @st.dialog("곡 전체 삭제 확인")
 def delete_confirm_dialog(song_id, title):
     st.write(f"'{title}' 찬양곡 전체를 삭제하시겠습니까?")
-    st.caption("⚠️ 주의: 이 곡에 등록된 모든 코드(Key)의 악보와 공통 PPT 정보가 DB에서 완전히 삭제됩니다.")
+    st.caption("주의: 이 곡에 등록된 모든 코드(Key)의 악보와 공통 PPT 정보가 DB에서 완전히 삭제됩니다.")
     c1, c2 = st.columns(2)
-    if c1.button("🚨 예, 전체 삭제합니다", type="primary", use_container_width=True):
+    if c1.button("예, 전체 삭제합니다", icon=":material/delete_forever:", type="primary", use_container_width=True):
         db.collection("songs").document(song_id).delete()
         st.rerun()
     if c2.button("취소", use_container_width=True): st.rerun()
@@ -92,7 +117,7 @@ def delete_history_dialog(doc_id, title):
     st.write(f"'{title}' 콘티 기록을 삭제하시겠습니까?")
     st.caption("※ 드라이브 파일은 유지되며 목록에서만 사라집니다.")
     c1, c2 = st.columns(2)
-    if c1.button("기록 삭제", type="primary", use_container_width=True):
+    if c1.button("기록 삭제", icon=":material/delete:", type="primary", use_container_width=True):
         db.collection("playlists").document(doc_id).delete()
         st.rerun()
     if c2.button("취소", use_container_width=True): st.rerun()
@@ -505,7 +530,7 @@ def do_save_song(title, youtube_url, tags_input, common_ppt_up, mode, song, is_p
 def show_add_edit_page(mode="add"):
     st.title("찬양곡 추가" if mode == "add" else "찬양곡 수정")
     song = st.session_state.get("editing_song", {}) if mode == "edit" else {}
-    if st.button("돌아가기"): st.session_state.update({"page": "main", "editing_song": None, "temp_keys": None}); st.rerun()
+    if st.button("돌아가기", icon=":material/arrow_back:"): st.session_state.update({"page": "main", "editing_song": None, "temp_keys": None}); st.rerun()
 
     if "temp_keys" not in st.session_state or st.session_state["temp_keys"] is None:
         existing_keys = song.get("keys", {})
@@ -523,28 +548,28 @@ def show_add_edit_page(mode="add"):
 
         is_practice = False
         if mode == "add":
-            is_practice = st.checkbox("🔨 연습곡으로 등록 (정식 곡 목록에는 안 보이고, 나중에 따로 정식 등록할 수 있어요)")
+            is_practice = st.checkbox("연습곡으로 등록 (정식 곡 목록에는 안 보이고, 나중에 따로 정식 등록할 수 있어요)")
 
-        common_ppt_up = st.file_uploader("📝 공통 가사 PPT (모든 Key 공통 사용)", type=["ppt","pptx"])
+        common_ppt_up = st.file_uploader("공통 가사 PPT (모든 Key 공통 사용)", type=["ppt","pptx"])
         if song.get("ppt_drive_url"):
-            st.caption("✅ 이미 등록된 공통 가사 PPT가 존재합니다.")
-        
+            st.caption("이미 등록된 공통 가사 PPT가 존재합니다.")
+
         st.divider()
         st.subheader("등록된 Key별 악보 목록")
-        st.caption("💡 각 Key 블록에는 악보 이미지만 추가하세요.")
+        st.caption("각 Key 블록에는 악보 이미지만 추가하세요.")
 
         keys_to_delete = []
         for k_code, k_data in list(st.session_state["temp_keys"].items()):
             with st.container(border=True):
                 ck1, ck2, ck3 = st.columns([1, 2, 1])
                 ck1.markdown(f"### Key: `{k_code}`")
-                
-                if ck3.form_submit_button(f"🗑️ {k_code}코드 삭제", use_container_width=True):
+
+                if ck3.form_submit_button(f"{k_code}코드 삭제", icon=":material/delete:", use_container_width=True):
                     keys_to_delete.append(k_code)
 
                 img_up = ck2.file_uploader(f"[{k_code}] 악보 이미지", type=["jpg","png","jpeg"], key=f"img_up_{k_code}")
                 if img_up: k_data["temp_img_file"] = img_up
-                if k_data.get("image_url"): ck2.caption(f"✅ 기존 악보 존재함")
+                if k_data.get("image_url"): ck2.caption("기존 악보 존재함")
 
         for tk in keys_to_delete:
             if len(st.session_state["temp_keys"]) > 1:
@@ -554,20 +579,20 @@ def show_add_edit_page(mode="add"):
                 st.error("최소 한 개 이상의 Key 블록이 존재해야 합니다.")
 
         st.divider()
-        st.write("➕ 새로운 Key(코드) 추가하기")
+        st.write("새로운 Key(코드) 추가하기")
         ak1, ak2, ak3, ak4 = st.columns([2, 1, 1, 2])
         base_key = ak1.selectbox("추가할 Key", ["C","D","E","F","G","A","B"], label_visibility="collapsed", key="add_base_key")
         is_sharp, is_flat = ak2.checkbox("#", key="add_sharp"), ak3.checkbox("b", key="add_flat")
         new_k_code = base_key + ("#" if is_sharp else "b" if is_flat else "")
         
-        if ak4.form_submit_button("코드 블록 추가", type="secondary", use_container_width=True):
+        if ak4.form_submit_button("코드 블록 추가", icon=":material/add:", type="secondary", use_container_width=True):
             if new_k_code not in st.session_state["temp_keys"]:
                 st.session_state["temp_keys"][new_k_code] = {"image_url": ""}
                 st.rerun()
             else: st.warning("이미 추가된 코드입니다.")
 
         st.divider()
-        if st.form_submit_button("저장하기", type="primary", use_container_width=True):
+        if st.form_submit_button("저장하기", icon=":material/save:", type="primary", use_container_width=True):
             if title:
                 if mode == "edit":
                     current_tags = [t.strip() for t in tags_input.split(",")] if tags_input else []
@@ -598,11 +623,11 @@ def show_add_edit_page(mode="add"):
 
                 valid_check = True
                 if mode == "add" and not common_ppt_up:
-                    st.error("🚨 신곡 등록 시 가사 PPT 파일은 필수 항목입니다. PPT를 추가해 주세요.")
+                    st.error("신곡 등록 시 가사 PPT 파일은 필수 항목입니다. PPT를 추가해 주세요.")
                     valid_check = False
-                    
+
                 if not st.session_state["temp_keys"]:
-                    st.error("🚨 최소 한 개 이상의 Key 코드를 추가하고 악보 이미지를 업로드해 주세요.")
+                    st.error("최소 한 개 이상의 Key 코드를 추가하고 악보 이미지를 업로드해 주세요.")
                     valid_check = False
                     
                 for k_code, k_data in st.session_state["temp_keys"].items():
@@ -610,7 +635,7 @@ def show_add_edit_page(mode="add"):
                     # 개별 Key 블록에 image_url이 없더라도 최상위 song 문서에 공통 image_url이 남아있다면 악보가 유효한 것으로 처리합니다.
                     has_any_sheet = bool(k_data.get("image_url")) or bool(k_data.get("temp_img_file")) or bool(song.get("image_url"))
                     if not has_any_sheet:
-                        st.error(f"🚨 [{k_code} 코드] 블록에 악보 이미지가 누락되었습니다. 악보를 추가해 주세요.")
+                        st.error(f"[{k_code} 코드] 블록에 악보 이미지가 누락되었습니다. 악보를 추가해 주세요.")
                         valid_check = False
                 
                 if valid_check:
@@ -640,13 +665,13 @@ else:
             st.markdown(f'<a href="{auth_url}" target="_self" style="text-decoration:none;"><div style="background-color:white; color:#757575; border-radius:4px; border:1px solid #dadce0; padding:10px; text-align:center; font-weight:500; cursor:pointer;">Google 로그인</div></a>', unsafe_allow_html=True)
         else:
             st.success(f"{st.session_state.get('user_name') or st.session_state.get('user_email')}님")
-            if st.button("로그아웃"): logout(); st.rerun()
+            if st.button("로그아웃", icon=":material/logout:"): logout(); st.rerun()
             st.divider(); st.header("폴더 바로 가기")
-            st.link_button("악보 콘티 폴더", SHEET_FOLDER_URL, use_container_width=True)
-            st.link_button("가사 콘티 폴더", LYRICS_FOLDER_URL, use_container_width=True)
-        
+            st.link_button("악보 콘티 폴더", SHEET_FOLDER_URL, icon=":material/folder_open:", use_container_width=True)
+            st.link_button("가사 콘티 폴더", LYRICS_FOLDER_URL, icon=":material/folder_open:", use_container_width=True)
+
         st.divider(); st.header("콘티 리스트")
-        if st.button("🎲 랜덤 콘티 생성 (5곡)", use_container_width=True):
+        if st.button("랜덤 콘티 생성 (5곡)", icon=":material/shuffle:", use_container_width=True):
             new_cart = generate_random_setlist()
             if new_cart is None:
                 st.error("랜덤 콘티를 만들려면 최소 5곡 이상 등록되어 있어야 합니다.")
@@ -662,47 +687,47 @@ else:
                     sel_key = item.get("selected_key", "C")
                     c1.write(f"**{idx+1}. {item['title']} ({sel_key})**")
                     
-                    # ▲ 위로 이동 버튼 로직
-                    if c2.button("▲", key=f"up_{idx}") and idx > 0:
+                    # 위로 이동 버튼 로직
+                    if c2.button("", key=f"up_{idx}", icon=":material/arrow_upward:", help="위로 이동") and idx > 0:
                         st.session_state["cart"][idx], st.session_state["cart"][idx-1] = st.session_state["cart"][idx-1], st.session_state["cart"][idx]
                         st.rerun()
-                        
-                    # ▼ 아래로 이동 버튼 로직 (안정적인 구조로 교정)
-                    if c3.button("▼", key=f"dn_{idx}") and idx < len(st.session_state["cart"]) - 1:
+
+                    # 아래로 이동 버튼 로직 (안정적인 구조로 교정)
+                    if c3.button("", key=f"dn_{idx}", icon=":material/arrow_downward:", help="아래로 이동") and idx < len(st.session_state["cart"]) - 1:
                         st.session_state["cart"][idx], st.session_state["cart"][idx+1] = st.session_state["cart"][idx+1], st.session_state["cart"][idx]
                         st.rerun()
-                        
-                    # X 제거 버튼 로직
-                    if c4.button("X", key=f"rm_{idx}"): 
+
+                    # 제거 버튼 로직
+                    if c4.button("", key=f"rm_{idx}", icon=":material/close:", help="목록에서 제거"):
                         st.session_state["cart"].pop(idx)
                         st.rerun()
-                    
+
                     if "is_full_page" not in item: item["is_full_page"] = False
-                    item["is_full_page"] = st.checkbox("전체 페이지 V", value=item["is_full_page"], key=f"full_chk_{idx}")
-            
+                    item["is_full_page"] = st.checkbox("전체 페이지로 보기", value=item["is_full_page"], key=f"full_chk_{idx}")
+
             st.divider(); st.subheader("슬라이드 제작")
-            if st.button("악보 PPT 생성", type="primary", use_container_width=True):
+            if st.button("악보 PPT 생성", icon=":material/music_note:", type="primary", use_container_width=True):
                 if validate_and_refresh_credentials():
                     url = create_praise_slides(st.session_state["cart"], fname, Credentials(**st.session_state["credentials"]), SHEET_FOLDER_ID)
-                    if url: 
+                    if url:
                         st.session_state["slide_url"] = url
                         save_playlist_to_firebase(fname, st.session_state["cart"], url)
                         st.rerun()
-            
+
             if st.session_state.get("slide_url"):
                 with st.container(border=True):
                     st.link_button("악보 열기", st.session_state["slide_url"], use_container_width=True)
-                    st.link_button("📂 악보 폴더 열기", SHEET_FOLDER_URL, use_container_width=True)
+                    st.link_button("악보 폴더 열기", SHEET_FOLDER_URL, icon=":material/folder_open:", use_container_width=True)
             st.divider()
-            if st.button("가사 PPT 생성", use_container_width=True):
+            if st.button("가사 PPT 생성", icon=":material/subtitles:", use_container_width=True):
                 if validate_and_refresh_credentials(): merge_and_upload_ppt(st.session_state["cart"], fname)
-            
+
             if st.session_state.get("ppt_slide_url"):
                 with st.container(border=True):
                     st.link_button("가사 열기", st.session_state["ppt_slide_url"], use_container_width=True)
-                    st.link_button("📂 가사 폴더 열기", LYRICS_FOLDER_URL, use_container_width=True)
+                    st.link_button("가사 폴더 열기", LYRICS_FOLDER_URL, icon=":material/folder_open:", use_container_width=True)
 
-            if st.button("전체 초기화", use_container_width=True):
+            if st.button("전체 초기화", icon=":material/restart_alt:", use_container_width=True):
                 st.session_state.update({"cart": [], "slide_url": None, "ppt_slide_url": None}); st.rerun()
         else: st.caption("곡을 담아주세요")
 
@@ -711,7 +736,7 @@ else:
         for h_doc in history:
             h, h_id = h_doc.to_dict(), h_doc.id
             with st.expander(f"{h['title']} ({h['created_at'].strftime('%m/%d %H:%M')})"):
-                if st.button("콘티 리스트에 담기", key=f"hist_load_{h_id}", use_container_width=True, type="primary"):
+                if st.button("콘티 리스트에 담기", key=f"hist_load_{h_id}", icon=":material/playlist_add:", use_container_width=True, type="primary"):
                     missing_songs = []
                     new_items = []
                     for s_item in h.get("items", []):
@@ -726,12 +751,12 @@ else:
                     st.session_state["cart"].extend(new_items)
                     if missing_songs: st.warning(f"DB에서 삭제된 곡 제외: {', '.join(missing_songs)}")
                     st.rerun()
-                if st.button("기록 삭제", key=f"hist_del_{h_id}", use_container_width=True): delete_history_dialog(h_id, h['title'])
+                if st.button("기록 삭제", key=f"hist_del_{h_id}", icon=":material/delete:", use_container_width=True): delete_history_dialog(h_id, h['title'])
                 for s in h.get("items", []): st.write(f"- {s['title']} ({s.get('selected_key', 'C')})")
 
     t1, t2 = st.columns([5,1])
     t1.title("Praise Maker")
-    if t2.button("찬양곡 추가", type="primary", use_container_width=True):
+    if t2.button("찬양곡 추가", icon=":material/add:", type="primary", use_container_width=True):
         st.session_state["page"] = "add_song"; st.rerun()
         
     practice_count = sum(1 for s in all_songs if s.get("status") == "practice")
@@ -766,20 +791,24 @@ else:
             with st.container(border=True):
                 h1, h2, h3 = st.columns([8,1,1])
                 h1.markdown(f"### {s['title']}")
-                if h2.button("수정", key=f"edit_{s['id']}"):
+                if h2.button("수정", key=f"edit_{s['id']}", icon=":material/edit:"):
                     st.session_state.update({"editing_song": s, "page": "edit_song"}); st.rerun()
-                if h3.button("🗑️ 곡 전체 삭제", key=f"del_{s['id']}"): delete_confirm_dialog(s['id'], s['title'])
-                if s.get("status") == "practice": st.caption("🔨 연습곡")
+                if h3.button("곡 전체 삭제", key=f"del_{s['id']}", icon=":material/delete:"): delete_confirm_dialog(s['id'], s['title'])
+                if s.get("status") == "practice":
+                    st.markdown('<span class="pm-badge pm-badge-practice">연습곡</span>', unsafe_allow_html=True)
                 usage = usage_stats.get(s["id"])
                 if usage:
                     days_ago = (datetime.date.today() - usage["last_used"]).days
                     if days_ago <= RECENT_USE_SHOW_DAYS:
                         when_text = "오늘" if days_ago == 0 else f"{days_ago}일 전"
                         if usage["recent_count"] >= FREQUENT_USE_THRESHOLD:
-                            st.caption(f"⚠️ 최근 자주 사용됨 (최근 {FREQUENT_USE_WINDOW_DAYS}일간 {usage['recent_count']}회, {when_text})")
+                            st.markdown(
+                                f'<span class="pm-badge pm-badge-warning">최근 자주 사용됨 · 최근 {FREQUENT_USE_WINDOW_DAYS}일간 {usage["recent_count"]}회 · {when_text}</span>',
+                                unsafe_allow_html=True
+                            )
                         else:
-                            st.caption(f"🔁 최근 사용: {when_text}")
-                if s.get("uploaded_by"): st.caption(f"👤 업로드: {s['uploaded_by']}")
+                            st.caption(f"최근 사용: {when_text}")
+                if s.get("uploaded_by"): st.caption(f"업로드: {s['uploaded_by']}")
                 if s.get("tags"): st.markdown(" ".join([f"`#{tag}`" for tag in s["tags"]]))
 
                 available_keys = list(s.get("keys", {}).keys())
@@ -790,14 +819,14 @@ else:
 
                 chosen_key = available_keys[0]
                 if s.get("status") == "practice":
-                    if st.button("🎓 정식 곡으로 등록", key=f"promote_{s['id']}", use_container_width=True, type="primary"):
+                    if st.button("정식 곡으로 등록", key=f"promote_{s['id']}", icon=":material/school:", use_container_width=True, type="primary"):
                         db.collection("songs").document(s["id"]).update({"status": "official"})
                         st.rerun()
                 else:
                     k_select_col, btn_add_col = st.columns([2, 8])
                     chosen_key = k_select_col.selectbox("코드 선택", available_keys, key=f"sel_k_{s['id']}", label_visibility="collapsed")
 
-                    if btn_add_col.button(f"[{chosen_key} 코드] 콘티 리스트에 담기", key=f"add_{s['id']}", use_container_width=True, type="primary"):
+                    if btn_add_col.button("콘티에 담기", key=f"add_{s['id']}", icon=":material/playlist_add:", use_container_width=True, type="primary"):
                         if not any(item['id'] == s['id'] and item.get('selected_key') == chosen_key for item in st.session_state["cart"]):
                             song_to_cart = deepcopy(s)
 
@@ -815,15 +844,15 @@ else:
 
                 l1, l2, l3 = st.columns(3)
                 if s.get("youtube_url"):
-                    l1.markdown(f'<a href="{s["youtube_url"]}" target="_blank" style="display:flex;align-items:center;justify-content:center;background-color:#F0F2F6;color:#262730;padding:5px 10px;border-radius:5px;text-decoration:none;font-size:13px;border:1px solid #E6E9EF;gap:5px;"><img src="https://upload.wikimedia.org/wikipedia/commons/e/ef/Youtube_logo.png" width="18">YouTube</a>', unsafe_allow_html=True)
-                
+                    l1.markdown(f'<a href="{s["youtube_url"]}" target="_blank" style="display:flex;align-items:center;justify-content:center;background-color:#F7FBFF;color:#1E293B;padding:5px 10px;border-radius:8px;text-decoration:none;font-size:13px;border:1px solid #E6EEF6;gap:5px;"><img src="https://upload.wikimedia.org/wikipedia/commons/e/ef/Youtube_logo.png" width="18">YouTube</a>', unsafe_allow_html=True)
+
                 tgt_img = s.get("image_url", "")
                 if "keys" in s and chosen_key in s["keys"]:
                     tgt_img = s["keys"][chosen_key].get("image_url", tgt_img)
                 tgt_ppt = s.get("ppt_drive_url", "")
 
-                if tgt_img: l2.markdown(f'<a href="{tgt_img}" target="_blank" style="display:flex;align-items:center;justify-content:center;background-color:#F0F2F6;color:#262730;padding:5px 10px;border-radius:5px;text-decoration:none;font-size:13px;border:1px solid #E6E9EF;">악보 이미지 ({chosen_key})</a>', unsafe_allow_html=True)
-                if tgt_ppt: l3.markdown(f'<a href="{tgt_ppt}" target="_blank" style="display:flex;align-items:center;justify-content:center;background-color:#F0F2F6;color:#262730;padding:5px 10px;border-radius:5px;text-decoration:none;font-size:13px;border:1px solid #E6E9EF;">가사 PPT (공통)</a>', unsafe_allow_html=True)
+                if tgt_img: l2.markdown(f'<a href="{tgt_img}" target="_blank" style="display:flex;align-items:center;justify-content:center;background-color:#F7FBFF;color:#1E293B;padding:5px 10px;border-radius:8px;text-decoration:none;font-size:13px;border:1px solid #E6EEF6;">악보 이미지 ({chosen_key})</a>', unsafe_allow_html=True)
+                if tgt_ppt: l3.markdown(f'<a href="{tgt_ppt}" target="_blank" style="display:flex;align-items:center;justify-content:center;background-color:#F7FBFF;color:#1E293B;padding:5px 10px;border-radius:8px;text-decoration:none;font-size:13px;border:1px solid #E6EEF6;">가사 PPT (공통)</a>', unsafe_allow_html=True)
         
         # ---------------------------------------------------------
         # 하단 페이징 네비게이션 컨트롤러 (처음 / 끝 포함 5열 구조)
@@ -832,24 +861,24 @@ else:
         p_col_first, p_col_prev, p_col_text, p_col_next, p_col_last = st.columns([0.7, 0.7, 3, 0.7, 0.7])
         
         with p_col_first:
-            if st.button("◀◀ 처음", disabled=(st.session_state["current_page"] == 1), use_container_width=True):
+            if st.button("처음", icon=":material/first_page:", disabled=(st.session_state["current_page"] == 1), use_container_width=True):
                 st.session_state["current_page"] = 1
                 st.rerun()
 
         with p_col_prev:
-            if st.button("◀ 이전", disabled=(st.session_state["current_page"] == 1), use_container_width=True):
+            if st.button("이전", icon=":material/chevron_left:", disabled=(st.session_state["current_page"] == 1), use_container_width=True):
                 st.session_state["current_page"] -= 1
                 st.rerun()
-                
+
         with p_col_text:
             st.markdown(f"<p style='text-align: center; margin-top: 5px;'><b>{st.session_state['current_page']}</b> / {total_pages} 페이지 (총 {total_items}곡)</p>", unsafe_allow_html=True)
-            
+
         with p_col_next:
-            if st.button("다음 ▶", disabled=(st.session_state["current_page"] == total_pages), use_container_width=True):
+            if st.button("다음", icon=":material/chevron_right:", disabled=(st.session_state["current_page"] == total_pages), use_container_width=True):
                 st.session_state["current_page"] += 1
                 st.rerun()
 
         with p_col_last:
-            if st.button("끝 ▶▶", disabled=(st.session_state["current_page"] == total_pages), use_container_width=True):
+            if st.button("끝", icon=":material/last_page:", disabled=(st.session_state["current_page"] == total_pages), use_container_width=True):
                 st.session_state["current_page"] = total_pages
                 st.rerun()

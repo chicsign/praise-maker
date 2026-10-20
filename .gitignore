@@ -11,7 +11,7 @@ venv/
 .env
 
 # Streamlit 관련
-.streamlit/config.toml
+# config.toml은 앱 테마(색상)라 저장소에 포함합니다. secrets.toml만 제외합니다.
 .streamlit/secrets.toml
 
 # OS 관련
