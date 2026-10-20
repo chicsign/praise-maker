@@ -3,13 +3,12 @@ import datetime
 import os
 import io
 import tempfile
-import shutil
-import subprocess
-import platform
+import time
 import requests
 import difflib
 import random
 from copy import deepcopy
+from PIL import Image
 from streamlit_cookies_manager import EncryptedCookieManager
 
 from services.firebase_service import bucket
@@ -20,11 +19,7 @@ from services.playlists_repo import FREQUENT_USE_WINDOW_DAYS
 from google.oauth2.credentials import Credentials
 from google.auth.transport.requests import Request
 from googleapiclient.discovery import build
-from googleapiclient.http import (
-    MediaFileUpload,
-    MediaIoBaseDownload
-)
-from googleapiclient.errors import HttpError
+from googleapiclient.http import MediaFileUpload
 
 # 로컬 테스트(http://localhost)에서만 보안 연결 검증을 느슨하게 허용합니다.
 # OAUTH_REDIRECT_URI가 https로 설정된 운영 환경에서는 이 플래그를 켜지 않습니다.
@@ -259,6 +254,13 @@ def clear_credentials_cookie():
     except Exception as e:
         print(f"[cookie-auth] clear FAILED: {e!r}", flush=True)
 
+def creds_to_dict(creds):
+    return {
+        "token": creds.token, "refresh_token": creds.refresh_token,
+        "token_uri": creds.token_uri, "client_id": creds.client_id,
+        "client_secret": creds.client_secret, "scopes": creds.scopes
+    }
+
 def restore_credentials_from_cookie():
     refresh_token = cookies.get("refresh_token")
     print(f"[cookie-auth] restore attempt. cookie has refresh_token={bool(refresh_token)}", flush=True)
@@ -273,11 +275,7 @@ def restore_credentials_from_cookie():
             scopes=cookies.get("scopes").split(",") if cookies.get("scopes") else None
         )
         creds.refresh(Request())
-        creds_dict = {
-            "token": creds.token, "refresh_token": creds.refresh_token,
-            "token_uri": creds.token_uri, "client_id": creds.client_id,
-            "client_secret": creds.client_secret, "scopes": creds.scopes
-        }
+        creds_dict = creds_to_dict(creds)
         st.session_state["credentials"] = creds_dict
 
         user_info = get_user_info(creds)
@@ -310,11 +308,7 @@ def validate_and_refresh_credentials():
         if creds.expired or (creds.valid == False):
             if creds.refresh_token:
                 creds.refresh(Request())
-                st.session_state["credentials"] = {
-                    "token": creds.token, "refresh_token": creds.refresh_token,
-                    "token_uri": creds.token_uri, "client_id": creds.client_id,
-                    "client_secret": creds.client_secret, "scopes": creds.scopes
-                }
+                st.session_state["credentials"] = creds_to_dict(creds)
                 save_credentials_to_cookie(st.session_state["credentials"])
             else:
                 return False
@@ -344,11 +338,7 @@ if st.query_params.get("code") and st.session_state["credentials"] is None:
         flow = create_flow()
         flow.fetch_token(code=st.query_params["code"])
         creds = flow.credentials
-        creds_dict = {
-            "token": creds.token, "refresh_token": creds.refresh_token,
-            "token_uri": creds.token_uri, "client_id": creds.client_id,
-            "client_secret": creds.client_secret, "scopes": creds.scopes
-        }
+        creds_dict = creds_to_dict(creds)
         st.session_state["credentials"] = creds_dict
         save_credentials_to_cookie(creds_dict)
         user_info = get_user_info(creds)
@@ -462,9 +452,6 @@ def do_save_song(title, youtube_url, tags_input, common_ppt_up, mode, song, is_p
                     img_f = k_data["temp_img_file"]
 
                     # [구글 슬라이드 크기 제한 & 포맷 에러 완벽 방어]
-                    from PIL import Image
-                    import io
-
                     # 1. 파일 바이트를 안전하게 복사하여 이미지 객체로 로드
                     img_bytes = img_f.getbuffer()
                     image = Image.open(io.BytesIO(img_bytes))
@@ -608,7 +595,6 @@ def show_add_edit_page(mode="add"):
                     if is_same_text and is_same_keys and (common_ppt_up is None):
                         st.info("변경 사항이 없습니다.")
                         st.session_state.update({"page": "main", "editing_song": None, "temp_keys": None})
-                        import time
                         time.sleep(1)
                         st.rerun()
 

@@ -1,10 +1,8 @@
 import os
 import datetime
-import streamlit as st
 
 from google_auth_oauthlib.flow import Flow
 from googleapiclient.discovery import build
-from google.oauth2.credentials import Credentials
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -30,23 +28,9 @@ def create_flow():
     redirect_uri = os.environ.get("OAUTH_REDIRECT_URI", "http://localhost:8501").strip()
     return Flow.from_client_config(CLIENT_CONFIG, scopes=SCOPES, redirect_uri=redirect_uri)
 
-def get_credentials():
-    if "credentials" not in st.session_state or st.session_state["credentials"] is None:
-        return None
-    creds_data = st.session_state["credentials"]
-    return Credentials(
-        token=creds_data["token"],
-        refresh_token=creds_data["refresh_token"],
-        token_uri=creds_data["token_uri"],
-        client_id=creds_data["client_id"],
-        client_secret=creds_data["client_secret"],
-        scopes=creds_data["scopes"]
-    )
-
 def create_praise_slides(cart_items, file_name, creds, folder_id, show_title_text=True):
-    creds = get_credentials()
     if not creds: return None
-    
+
     slides_service = build("slides", "v1", credentials=creds, static_discovery=False)
     drive_service = build("drive", "v3", credentials=creds, static_discovery=False)
 
