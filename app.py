@@ -686,11 +686,12 @@ else:
             st.divider(); st.subheader("슬라이드 제작")
             if st.button("악보 PPT 생성", icon=":material/music_note:", type="primary", use_container_width=True):
                 if validate_and_refresh_credentials():
-                    url = create_praise_slides(st.session_state["cart"], fname, Credentials(**st.session_state["credentials"]), SHEET_FOLDER_ID)
+                    with st.spinner("악보 PPT 생성 중..."):
+                        url = create_praise_slides(st.session_state["cart"], fname, Credentials(**st.session_state["credentials"]), SHEET_FOLDER_ID)
                     if url:
                         st.session_state["slide_url"] = url
                         save_playlist_to_firebase(fname, st.session_state["cart"], url)
-                        st.rerun()
+                        st.success("악보 PPT 생성 완료")
 
             if st.session_state.get("slide_url"):
                 with st.container(border=True):
@@ -742,6 +743,13 @@ else:
 
     q = st.text_input("검색", placeholder="제목, 태그, Key 검색", label_visibility="collapsed").strip().lower()
 
+    # 탭을 바꾸거나 검색어를 바꾸면 목록이 통째로 달라지므로, 이전 페이지 번호에 머물러
+    # "존재하지 않는 페이지"를 보게 되는 일이 없도록 1페이지로 되돌립니다.
+    filter_signature = (is_practice_view, q)
+    if st.session_state.get("_last_filter_signature") != filter_signature:
+        st.session_state["current_page"] = 1
+        st.session_state["_last_filter_signature"] = filter_signature
+
     status_songs = [s for s in all_songs if (s.get("status") == "practice") == is_practice_view]
     filtered_songs = [
         s for s in status_songs
@@ -750,9 +758,14 @@ else:
 
     ITEMS_PER_PAGE = 10
     total_items = len(filtered_songs)
-    
+
     if total_items == 0:
-        st.info("검색 결과가 없거나 등록된 찬양곡이 없습니다.")
+        if status_songs:
+            st.info("검색 결과가 없습니다.")
+        elif is_practice_view:
+            st.info("아직 등록된 연습곡이 없습니다.")
+        else:
+            st.info("등록된 찬양곡이 없습니다. 오른쪽 위 '찬양곡 추가' 버튼으로 첫 곡을 등록해 보세요.")
     else:
         total_pages = max(1, (total_items - 1) // ITEMS_PER_PAGE + 1)
         if "current_page" not in st.session_state: st.session_state["current_page"] = 1
@@ -809,15 +822,17 @@ else:
 
                 chosen_key = available_keys[0]
                 if s.get("status") == "practice":
-                    if st.button("정식 곡으로 등록", key=f"promote_{s['id']}", icon=":material/school:", use_container_width=True, type="primary"):
+                    if st.button("정식 곡으로 등록", key=f"promote_{s['id']}", icon=":material/school:", use_container_width=True, type="secondary"):
                         songs_repo.promote_to_official(s["id"])
                         st.rerun()
                 else:
                     k_select_col, btn_add_col = st.columns([2, 8])
                     chosen_key = k_select_col.selectbox("코드 선택", available_keys, key=f"sel_k_{s['id']}", label_visibility="collapsed")
 
-                    if btn_add_col.button("콘티에 담기", key=f"add_{s['id']}", icon=":material/playlist_add:", use_container_width=True, type="primary"):
-                        if not any(item['id'] == s['id'] and item.get('selected_key') == chosen_key for item in st.session_state["cart"]):
+                    if btn_add_col.button("콘티에 담기", key=f"add_{s['id']}", icon=":material/playlist_add:", use_container_width=True, type="secondary"):
+                        if any(item['id'] == s['id'] and item.get('selected_key') == chosen_key for item in st.session_state["cart"]):
+                            st.toast(f"'{s['title']}' ({chosen_key})는 이미 콘티에 담겨 있어요.", icon=":material/info:")
+                        else:
                             song_to_cart = deepcopy(s)
 
                             # --- [🔥 핵심 수정: 선택된 코드에 맞는 이미지로 강제 오버라이드] ---
@@ -830,6 +845,7 @@ else:
 
                             song_to_cart["selected_key"] = chosen_key
                             st.session_state["cart"].append(song_to_cart)
+                            st.toast(f"'{s['title']}' ({chosen_key})를 콘티에 담았어요.", icon=":material/playlist_add_check:")
                             st.rerun()
 
                 l1, l2 = st.columns(2)
