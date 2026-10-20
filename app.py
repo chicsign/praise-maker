@@ -403,6 +403,7 @@ def do_save_song(title, youtube_url, tags_input, common_ppt_up, mode, song):
 
             if mode == "add":
                 data["created_at"] = datetime.datetime.now()
+                data["uploaded_by"] = st.session_state.get("user_name") or st.session_state.get("user_email") or "알 수 없음"
                 db.collection("songs").add(data)
             else:
                 db.collection("songs").document(song["id"]).update(data)
@@ -658,6 +659,7 @@ else:
                 if h2.button("수정", key=f"edit_{s['id']}"):
                     st.session_state.update({"editing_song": s, "page": "edit_song"}); st.rerun()
                 if h3.button("🗑️ 곡 전체 삭제", key=f"del_{s['id']}"): delete_confirm_dialog(s['id'], s['title'])
+                if s.get("uploaded_by"): st.caption(f"👤 업로드: {s['uploaded_by']}")
                 if s.get("tags"): st.markdown(" ".join([f"`#{tag}`" for tag in s["tags"]]))
                 
                 available_keys = list(s.get("keys", {}).keys())
