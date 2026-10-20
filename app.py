@@ -865,8 +865,8 @@ else:
                     tgt_img = s["keys"][chosen_key].get("image_url", tgt_img)
                 tgt_ppt = s.get("ppt_drive_url", "")
 
-                if tgt_img: l1.markdown(f'<a href="{tgt_img}" target="_blank" style="display:flex;align-items:center;justify-content:center;background-color:#F7FBFF;color:#1E293B;padding:5px 10px;border-radius:8px;text-decoration:none;font-size:13px;border:1px solid #E6EEF6;">악보 이미지 ({chosen_key})</a>', unsafe_allow_html=True)
-                if tgt_ppt: l2.markdown(f'<a href="{tgt_ppt}" target="_blank" style="display:flex;align-items:center;justify-content:center;background-color:#F7FBFF;color:#1E293B;padding:5px 10px;border-radius:8px;text-decoration:none;font-size:13px;border:1px solid #E6EEF6;">가사 PPT (공통)</a>', unsafe_allow_html=True)
+                if tgt_img: l1.markdown(f'<a href="{tgt_img}" target="_blank" style="display:flex;align-items:center;justify-content:center;background-color:#F7FBFF;color:#1E293B;padding:5px 10px;border-radius:8px;text-decoration:none;font-size:13px;border:1px solid #E6EEF6;margin-top:10px;">악보 이미지 ({chosen_key})</a>', unsafe_allow_html=True)
+                if tgt_ppt: l2.markdown(f'<a href="{tgt_ppt}" target="_blank" style="display:flex;align-items:center;justify-content:center;background-color:#F7FBFF;color:#1E293B;padding:5px 10px;border-radius:8px;text-decoration:none;font-size:13px;border:1px solid #E6EEF6;margin-top:10px;">가사 PPT (공통)</a>', unsafe_allow_html=True)
 
         for row_start in range(0, len(page_items), 2):
             row_items = page_items[row_start:row_start + 2]
